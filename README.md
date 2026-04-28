@@ -40,12 +40,11 @@
 ├── debug_detection.jpg  # YOLO 检测结果（调试用）
 ├── 商品采集汇总.xlsx    # 采集结果输出文件
 └── README.md            # 项目说明文档
+📌 使用说明
+电脑 USB 连接安卓手机
+手机开启【开发者选项】+【USB 调试】
+本地部署 Python3.8 及全部第三方依赖库
+直接运行采集脚本，全自动执行商品搜索、识别、数据抓取与导出
 
-##  使用说明
-电脑USB连接手机
-手机开启开发者模式，并打开USB调试
-安装好py3.8 以及相关环境依赖
-运行 采集**.py 脚本
-运行效果部分展示如下
-<img width="1080" height="2400" alt="image" src="https://github.com/user-attachments/assets/59886c1c-ef89-4324-972a-edcf3b2a18af" />
-<img width="624" height="1415" alt="image" src="https://github.com/user-attachments/assets/8f94a235-db6c-4933-86e7-2ff969632b7e" />
+📷 运行效果展示
+<img width="1080" height="2400" alt="image" src="https://github.com/user-attachments/assets/59886c1c-ef89-4324-972a18af"><img width="624" height="1415" alt="image" src="https://github.com/user-attachments/assets/8f94a235-db6c-4933-86e7-2ff969632b7e">```
