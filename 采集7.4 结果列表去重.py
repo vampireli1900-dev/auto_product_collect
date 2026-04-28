@@ -236,9 +236,9 @@ def get_products_with_tags():
 def get_priority(tags):
     if "baiyi" in tags and "brand" in tags:
         return 4
-    elif "brand" in tags:
-        return 3
     elif "baiyi" in tags:
+        return 3
+    elif "brand" in tags:
         return 2
     elif "global" in tags:
         return 1
