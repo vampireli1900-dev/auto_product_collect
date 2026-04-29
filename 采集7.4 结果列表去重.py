@@ -186,7 +186,7 @@ def search_product(keyword):
 def scan_list_products():
     d.screenshot("list_screen.jpg")
     img = cv2.imread("list_screen.jpg")
-    results = model(img, conf=0.25)
+    results = model(img, conf=0.2)
     debug_img = results[0].plot()
     cv2.imwrite("debug_detection.jpg", debug_img)
 
@@ -198,9 +198,6 @@ def scan_list_products():
     for r in results:
         boxes = r.boxes
         for box in boxes:
-            conf = box.conf[0].item()
-            if conf < 0.5:
-                continue
             cls = int(box.cls)
             x1, y1, x2, y2 = map(int, box.xyxy[0])
             cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
@@ -262,7 +259,7 @@ def scroll_down_once():
 
 def scroll_to_top():
     """滑动返回列表顶部"""
-    for _ in range(5):
+    for _ in range(2):
         d.swipe(500, 600, 500, 1800, 0.3)
         time.sleep(0.8)
 
@@ -270,18 +267,34 @@ def scroll_to_top():
 def sort_products_by_priority():
     raw_products = get_products_with_tags()
 
+    # =============================================
+    # ✅ 正确逻辑：逐页翻页，一旦发现非 global 就停止
+    # =============================================
     if is_all_global(raw_products):
         print("⚠️ 当前页面全部为global标签，开始逐次翻页检测...")
-        scroll_down_once()
-        raw_products = get_products_with_tags()
-        scroll_down_once()
-        raw_products = get_products_with_tags()
-        print("⚠️ 已翻页2次，返回顶部进行最终检测...")
-        scroll_to_top()
-        time.sleep(2)
-        raw_products = get_products_with_tags()
 
+        # 翻第1次
+        scroll_down_once()
+        raw_products = get_products_with_tags()
+        if not is_all_global(raw_products):
+            print("✅ 第1次翻页找到优质商品，停止翻页")
+
+        else:
+            # 第1次还是全 global → 翻第2次
+            scroll_down_once()
+            raw_products = get_products_with_tags()
+            if not is_all_global(raw_products):
+                print("✅ 第2次翻页找到优质商品，停止翻页")
+            else:
+                print("⚠️ 2次翻页仍全是global，返回顶部")
+                scroll_to_top()
+                time.sleep(2)
+                raw_products = get_products_with_tags()
+
+    # 排序
     sorted_products = sorted(raw_products, key=lambda p: get_priority(p["tags"]), reverse=True)
+
+    # 如果还是全 global，只取前2个
     if is_all_global(sorted_products):
         sorted_products = sorted_products[:2]
 
