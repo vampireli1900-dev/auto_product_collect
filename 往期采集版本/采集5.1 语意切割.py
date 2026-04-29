@@ -8,9 +8,9 @@ import easyocr
 
 # ====================== 初始化 ======================
 d = u2.connect()
-model = YOLO("runs/detect/pdd_logo_train-2/weights/best.pt")
-subsidy_model = YOLO("runs/detect/subsidy_train/weights/best.pt")
-detail_model = YOLO("runs/detect/product_detail_train/weights/best.pt")
+model = YOLO("../runs/detect/pdd_logo_train-2/weights/best.pt")
+subsidy_model = YOLO("../runs/detect/subsidy_train/weights/best.pt")
+detail_model = YOLO("../runs/detect/product_detail_train/weights/best.pt")
 reader = easyocr.Reader(['ch_sim'], gpu=False)
 
 # ====================== 【商品搜索名单】 ======================
@@ -101,10 +101,10 @@ def search_product(keyword):
 # ====================== 2. 列表页商品标签识别 ======================
 def scan_list_products():
     d.screenshot("list_screen.jpg")
-    img = cv2.imread("list_screen.jpg")
+    img = cv2.imread("../list_screen.jpg")
     results = model(img, conf=0.25)
     debug_img = results[0].plot()  # 画出检测框
-    cv2.imwrite("debug_detection.jpg", debug_img)
+    cv2.imwrite("../debug_detection.jpg", debug_img)
 
     # ====================== 🔥 展示调试窗口 ======================
     cv2.imshow("YOLO 列表商品检测", debug_img)

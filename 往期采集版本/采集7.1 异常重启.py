@@ -8,32 +8,24 @@ import easyocr
 import pandas as pd
 import os
 import logging
-logging.disable(logging.WARNING)  # 关闭警告
-YOLO().verbose = False            # 关闭 YOLO 检测打印
+import subprocess  # 用于adb命令
+logging.disable(logging.WARNING)
+YOLO().verbose = False
 
 # ====================== 初始化 ======================
 d = u2.connect()
-model = YOLO("runs/detect/pdd_logo_train-2/weights/best.pt")
-subsidy_model = YOLO("runs/detect/subsidy_train/weights/best.pt")
-detail_model = YOLO("runs/detect/product_detail_train/weights/best.pt")
+model = YOLO("../runs/detect/pdd_logo_train-2/weights/best.pt")
+subsidy_model = YOLO("../runs/detect/subsidy_train/weights/best.pt")
+detail_model = YOLO("../runs/detect/product_detail_train/weights/best.pt")
 reader = easyocr.Reader(['ch_sim'], gpu=False)
 
-# ====================== 【商品搜索名单】 ======================
-PRODUCT_LIST = [
-    "SK2多方位三件套",
-    "后水妍两件套盒",
-    "后天气丹光耀焕活紧颜系列3件套礼盒",
-    "雪花秀滋盈肌本舒活2件套",
-    "雪花秀顺行三件套",
-    "后男士两件套",
-    "后拱辰享美白两件套",
-    "Whoo后拱辰享美黄金气垫粉底液#21正装+带双替换",
-    "科颜氏男士保湿三件套"
-]
+# ====================== 【新增配置项】 ======================
+PRODUCT_LIST_FILE = "../搜索名单.xlsx"
+SEARCH_INTERVAL_SECONDS = 40
+PACKAGE_NAME = "com.xunmeng.pinduoduo"  # 拼多多包名
 
 # ====================== 全局存储所有商品记录 ======================
 record_list = []
-# 自定义表头
 EXCEL_HEADER = [
     "货品名称（详情页采集的）",
     "关键词（搜索的）",
@@ -44,20 +36,66 @@ EXCEL_HEADER = [
     "生产日期"
 ]
 
-# ====================== 保存Excel 追加写入 ======================
+# ====================== 保存Excel ======================
 def save_all_to_excel():
     if not record_list:
         print("⚠️ 暂无采集数据，跳过保存")
         return
     df = pd.DataFrame(record_list, columns=EXCEL_HEADER)
-    file = "商品采集汇总.xlsx"
+    file = "../商品采集汇总.xlsx"
     if os.path.exists(file):
         old_df = pd.read_excel(file)
         df = pd.concat([old_df, df], ignore_index=True)
     df.to_excel(file, index=False)
     print(f"\n📁 已批量保存全部记录至：{file}，当前总行数：{len(df)}")
 
-# ====================== 🔥 AI语义切割匹配（Qwen:4b） ======================
+
+# ====================== 【终极稳定版：应用内强制回到首页】 ======================
+def go_to_pinduoduo_home():
+    print("\n🔴 检测到异常，正在强制跳回拼多多首页...")
+    try:
+        # ✅ 你测试通过的最终命令（带 -S 强制刷新）
+        subprocess.run([
+            "adb", "shell", "am", "start", "-S", "-n",
+            "com.xunmeng.pinduoduo/com.xunmeng.pinduoduo.ui.activity.MainFrameActivity"
+        ], check=True, timeout=15)
+        time.sleep(6)  # 等待页面加载
+        print("🟢 已回到拼多多首页，准备重新采集")
+    except Exception as e:
+        print(f"❌ 跳转失败: {e}，尝试重启APP")
+        # 备用方案：杀进程重启
+        subprocess.run(["adb", "shell", "am", "force-stop", "com.xunmeng.pinduoduo"])
+        time.sleep(2)
+        subprocess.run(["adb", "shell", "am", "start", "-n", "com.xunmeng.pinduoduo/com.xunmeng.pinduoduo.ui.activity.MainFrameActivity"])
+        time.sleep(8)
+
+# ====================== 【旧的重启函数删除，用这个】 ======================
+
+# ====================== 读取带续采状态的名单 ======================
+def load_product_list_with_status():
+    if not os.path.exists(PRODUCT_LIST_FILE):
+        print(f"❌ 未找到名单文件：{PRODUCT_LIST_FILE}")
+        return []
+    df = pd.read_excel(PRODUCT_LIST_FILE)
+    if "货品名称" not in df.columns:
+        print("❌ Excel必须包含列：货品名称")
+        return []
+    if "状态" not in df.columns:
+        df["状态"] = "未采集"
+    todo = df[df["状态"] == "未采集"]["货品名称"].dropna().astype(str).tolist()
+    total = len(df)
+    done = len(df[df["状态"] == "已采集"])
+    print(f"✅ 总商品数：{total} | 已采集：{done} | 待采集：{len(todo)}")
+    return todo
+
+# ====================== 标记商品为已采集 ======================
+def mark_product_as_done(product_name):
+    df = pd.read_excel(PRODUCT_LIST_FILE)
+    df.loc[df["货品名称"] == product_name, "状态"] = "已采集"
+    df.to_excel(PRODUCT_LIST_FILE, index=False)
+    print(f"✅ 已标记完成：{product_name}")
+
+# ====================== 🔥 AI语义切割匹配（你原版，完全不动） ======================
 def is_same_product_by_llm(search_word, product_title):
     cut_prompt = """
 请把下面的文本，按中文语义切成独立词语单元。
@@ -72,14 +110,14 @@ def is_same_product_by_llm(search_word, product_title):
     def ai_cut(text):
         try:
             resp = requests.post(
-                "http://127.0.0.1:11434/api/generate",  # ✅ 修复URL
+                "http://127.0.0.1:11434/api/generate",
                 json={
                     "model": "qwen:4b",
                     "prompt": cut_prompt + text,
                     "stream": False,
                     "temperature": 0.0,
                     "top_p": 0.1,
-                    "context": []  # ✅ 彻底清空历史对话
+                    "context": []
                 },
                 timeout=20
             )
@@ -87,8 +125,7 @@ def is_same_product_by_llm(search_word, product_title):
             clean = re.sub(r'[^\w\s]', ' ', raw).lower()
             return [w for w in clean.split() if w]
         except Exception as e:
-            print('❌ AI对话异常：', str(e))  # ✅ 打印真实错误
-            # ✅ 异常时返回切割后的列表，不崩溃
+            print('❌ AI对话异常：', str(e))
             clean_text = re.sub(r'[^a-z0-9\u4e00-\u9fff]', '', text.lower())
             return [c for c in clean_text]
 
@@ -132,10 +169,10 @@ def search_product(keyword):
 # ====================== 2. 列表页商品标签识别 ======================
 def scan_list_products():
     d.screenshot("list_screen.jpg")
-    img = cv2.imread("list_screen.jpg")
+    img = cv2.imread("../list_screen.jpg")
     results = model(img, conf=0.25)
     debug_img = results[0].plot()
-    cv2.imwrite("debug_detection.jpg", debug_img)
+    cv2.imwrite("../debug_detection.jpg", debug_img)
 
     cv2.imshow("YOLO 列表商品检测", debug_img)
     cv2.waitKey(1000)
@@ -198,7 +235,7 @@ def is_subsidy_product():
     xml = d.dump_hierarchy()
     return "百亿补贴" in xml or "官方补贴" in xml
 
-# ====================== 5. 商品名称+价格提取（二元+单字兜底+中文数量规则） ======================
+# ====================== 5. 商品名称+价格提取 ======================
 def extract_product_info(xml_content, search_word):
     import re
     def get_ngram_pairs(text, n=2):
@@ -260,7 +297,6 @@ def extract_product_info(xml_content, search_word):
                 if len(desc) > len(best_title):
                     best_title = desc
 
-    # ========================== 【强力修复：价格过滤】 ==========================
     price_pattern = r'[¥￥]\s*(\d+(?:\.\d+)?)'
     all_prices = re.findall(price_pattern, xml_content)
     price_nums = [float(p) for p in all_prices]
@@ -269,34 +305,25 @@ def extract_product_info(xml_content, search_word):
     current_price = None
 
     if len(price_nums) > 0:
-        # 去重
         prices = sorted(list(set(price_nums)))
         valid = []
-
-        # 你定的规则：前3位相同，并且大10倍 → 删掉大的
         for i in prices:
             keep = True
             for j in prices:
                 if i == j:
                     continue
-                # 10倍关系
                 if max(i, j) >= min(i, j) * 10:
-                    # 转整数，判断前3位
                     s_i = str(int(round(i)))
                     s_j = str(int(round(j)))
                     if len(s_i) >= 3 and len(s_j) >= 3 and s_i[:3] == s_j[:3]:
-                        # 大的那个丢掉
                         if i > j:
                             keep = False
                         break
             if keep:
                 valid.append(i)
-
-        # 最终有效价格
         if valid:
             current_price = str(min(valid))
             original_price = str(max(valid))
-    # ==========================================================================
 
     return {
         "title": best_title.strip() if best_title else "",
@@ -351,16 +378,15 @@ def get_production_date_from_xml(xml_content):
     return match.group(1) if match else None
 
 def get_date_with_retry():
-    for i in range(3):
         xml = d.dump_hierarchy(pretty=True)
         pd = get_production_date_from_xml(xml)
         if pd:
             return pd
-        d.swipe(500, 1600, 500, 800)
-        time.sleep(1)
-    return None
+        else:
+            return None
 
-# ====================== 8. 单个商品采集 + 即时存入记录 ======================
+
+# ====================== 8. 单个商品采集 ======================
 def collect_single_product(search_word):
     xml = d.dump_hierarchy(pretty=True)
     product_info = extract_product_info(xml, search_word)
@@ -372,14 +398,10 @@ def collect_single_product(search_word):
 
     subsidy_str = "是" if is_subsidy else "否"
 
-    # 进入详情拿生产日期
     found_detail = find_and_click_detail()
     produce_date = get_date_with_retry() if found_detail else ""
-
-    # 规格暂时空置
     spec_str = ""
 
-    # 🔥 拆分：原价、现价 独立两列
     row_data = [
         title,
         search_word,
@@ -390,10 +412,8 @@ def collect_single_product(search_word):
         produce_date
     ]
 
-    # 存入全局列表
     record_list.append(row_data)
 
-    # 控制台打印
     print("\n" + "="*80)
     print("📋 本条采集记录：")
     print(f"货品名称：{title}")
@@ -405,7 +425,6 @@ def collect_single_product(search_word):
     print(f"生产日期：{produce_date}")
     print("="*80)
 
-    # AI匹配校验
     if not is_same_product_by_llm(search_word, title):
         print("❌ AI 判定：商品不匹配")
         return "NOT_MATCH"
@@ -417,7 +436,7 @@ def collect_single_product(search_word):
         "found_detail": found_detail
     }
 
-# ====================== 9. 遍历同优先级全部商品，全部采集 ======================
+# ====================== 9. 遍历同优先级全部商品 ======================
 def select_and_collect_best_product(search_word):
     print("🔍 开始扫描列表页商品标签...")
     products = get_products_with_tags()
@@ -435,7 +454,6 @@ def select_and_collect_best_product(search_word):
         d.click(p["cx"], p["cy"])
         time.sleep(1)
         res = collect_single_product(search_word)
-        # 返回列表
         if res == "NOT_MATCH":
             d.press("back")
             time.sleep(1.5)
@@ -450,18 +468,37 @@ def select_and_collect_best_product(search_word):
                 time.sleep(1.5)
     return True
 
-# ====================== 10. 主循环 ======================
+# ====================== 【自动异常重启 + 断点续采】主循环 ======================
 def main():
-    print("🚀 启动自动搜索 + 全商品采集 + Excel导出")
+    print("🚀 启动自动搜索 + 全商品采集 + Excel导出 + 中断续采 + 异常自动重启")
+
+    PRODUCT_LIST = load_product_list_with_status()
+    if not PRODUCT_LIST:
+        print("🎉 所有商品已全部采集完成！")
+        return
+
     for keyword in PRODUCT_LIST:
-        search_product(keyword)
-        select_and_collect_best_product(keyword)
-        time.sleep(1)
-        print(f"\n=====================================")
-        print(f"✅ 【{keyword}】全部商品采集完成")
-        print(f"=====================================")
-    # 全部跑完统一保存Excel
-    save_all_to_excel()
+        success = False
+        while not success:
+            try:
+                print(f"\n===== 开始采集：{keyword} =====")
+                search_product(keyword)
+                select_and_collect_best_product(keyword)
+
+                mark_product_as_done(keyword)
+                save_all_to_excel()
+
+                print(f"\n⏳ 等待 {SEARCH_INTERVAL_SECONDS} 秒后继续...")
+                time.sleep(SEARCH_INTERVAL_SECONDS)
+
+                print(f"✅ 【{keyword}】采集完成！")
+                success = True
+
+            except Exception as e:
+                print(f"\n❌ 采集发生异常：{str(e)}")
+                go_to_pinduoduo_home()  # 自动重启拼多多
+                print(f"🔄 重启完成，重新采集：{keyword}")
+
     print("\n🎉 全部商品采集任务结束！")
 
 if __name__ == "__main__":

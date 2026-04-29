@@ -8,23 +8,26 @@ import easyocr
 import pandas as pd
 import os
 import logging
+from zhipuai import ZhipuAI
 logging.disable(logging.WARNING)  # 关闭警告
 YOLO().verbose = False            # 关闭 YOLO 检测打印
 
 # ====================== 初始化 ======================
 d = u2.connect()
-model = YOLO("runs/detect/pdd_logo_train-2/weights/best.pt")
-subsidy_model = YOLO("runs/detect/subsidy_train/weights/best.pt")
-detail_model = YOLO("runs/detect/product_detail_train/weights/best.pt")
+model = YOLO("../runs/detect/pdd_logo_train-2/weights/best.pt")
+subsidy_model = YOLO("../runs/detect/subsidy_train/weights/best.pt")
+detail_model = YOLO("../runs/detect/product_detail_train/weights/best.pt")
 reader = easyocr.Reader(['ch_sim'], gpu=False)
+API_KEY = "f95ee93c19db4b9c935d2815211ef146.8yjbjcS2vM6auXbR"
 
 # ====================== 【商品搜索名单】 ======================
 PRODUCT_LIST = [
-    "娇韵诗 弹簧两件套",
-    "娇韵诗 美白三件套",
-    "娇韵诗 弹簧三件套",
-    "娇韵诗 孕妇两件套",
-    "碧欧泉 男士水动力3件套"
+
+    "雪花秀顺行三件套",
+    "后男士两件套",
+    "后拱辰享美白两件套",
+    "Whoo后拱辰享美黄金气垫粉底液#21正装+带双替换",
+    "科颜氏男士保湿三件套"
 ]
 
 # ====================== 全局存储所有商品记录 ======================
@@ -46,48 +49,65 @@ def save_all_to_excel():
         print("⚠️ 暂无采集数据，跳过保存")
         return
     df = pd.DataFrame(record_list, columns=EXCEL_HEADER)
-    file = "商品采集汇总.xlsx"
+    file = "../商品采集汇总.xlsx"
     if os.path.exists(file):
         old_df = pd.read_excel(file)
         df = pd.concat([old_df, df], ignore_index=True)
     df.to_excel(file, index=False)
     print(f"\n📁 已批量保存全部记录至：{file}，当前总行数：{len(df)}")
 
-# ====================== 🔥 AI语义切割匹配（Qwen:4b） ======================
+
+# ====================== 🔥 GLM-4.7-Flash 语义切割匹配 ======================
 def is_same_product_by_llm(search_word, product_title):
+    # 提示词：一次请求同时拆分两个文本
     cut_prompt = """
-请把下面的文本，按中文语义切成独立词语单元。
+请严格按要求执行，不要分析、不要解释、不要步骤、不要思考过程。
+将下面【文本1】和【文本2】分别拆分为词语单元。
 规则：
-1. 每个单元不超过5个字符
-2. 只用空格分隔
-3. 不要任何标点符号
-4. 不要解释，只输出切割结果
+1. 每个词语单元不超过5个汉字
+2. 多个词语只用空格隔开
+3. 删除所有标点、符号、特殊字符
+4. 输出格式：只返回两行，第一行是文本1的结果，第二行是文本2的结果
 
-文本：
+文本1：{search}
+文本2：{title}
 """
-    def ai_cut(text):
-        try:
-            resp = requests.post(
-                "http127.0.0.1:11434/api/generate",
-                json={
-                    "model": "qwen:4b",
-                    "prompt": cut_prompt + text,
-                    "stream": False,
-                    "temperature": 0.0,
-                    "top_p": 0.1,
-                    "context": []  # 强制清空上下文
-                },
-                timeout=20
-            )
-            raw = resp.json()["response"].strip()
-            clean = re.sub(r'[^\w\s]', ' ', raw).lower()
-            return [w for w in clean.split() if w]
-        except:
-            return re.sub(r'[^a-z0-9\u4e00-\u9fff]','',text.lower())
 
-    title_units = ai_cut(product_title)
-    search_units = ai_cut(search_word)
+    try:
+        client = ZhipuAI(api_key=API_KEY)
+        response = client.chat.completions.create(
+            model="glm-4.7-flash",
+            messages=[
+                {"role": "user", "content": cut_prompt.format(search=search_word, title=product_title)}
+            ],
+            thinking={
+                "type": "enabled",    # 你指定的，我不动
+            },
+            temperature=0.0,
+            max_tokens=65536,
+            stream=False,
+            timeout=30
+        )
 
+        # 一次请求拿到结果，按行拆分
+        content = response.choices[0].message.content.strip()
+        lines = [l.strip() for l in content.splitlines() if l.strip()]
+        search_result = lines[0] if len(lines) >= 1 else ""
+        title_result = lines[1] if len(lines) >= 2 else ""
+
+        # 转成列表格式（兼容你原有逻辑）
+        search_units = re.sub(r'[^\w\s]', ' ', search_result).lower().split()
+        title_units = re.sub(r'[^\w\s]', ' ', title_result).lower().split()
+
+    except Exception as e:
+        print('❌ GLM 调用异常：', str(e))
+        # 兜底本地分词
+        search_units = list(re.sub(r'[^a-z0-9\u4e00-\u9fff]', '', search_word.lower()))
+        title_units = list(re.sub(r'[^a-z0-9\u4e00-\u9fff]', '', product_title.lower()))
+
+    # ======================
+    # 你原有逻辑 完全不动
+    # ======================
     print(f"[DEBUG] 标题语义单元: {title_units}")
     print(f"[DEBUG] 搜索词语义单元: {search_units}")
 
@@ -125,10 +145,10 @@ def search_product(keyword):
 # ====================== 2. 列表页商品标签识别 ======================
 def scan_list_products():
     d.screenshot("list_screen.jpg")
-    img = cv2.imread("list_screen.jpg")
+    img = cv2.imread("../list_screen.jpg")
     results = model(img, conf=0.25)
     debug_img = results[0].plot()
-    cv2.imwrite("debug_detection.jpg", debug_img)
+    cv2.imwrite("../debug_detection.jpg", debug_img)
 
     cv2.imshow("YOLO 列表商品检测", debug_img)
     cv2.waitKey(1000)
@@ -213,13 +233,12 @@ def extract_product_info(xml_content, search_word):
 
     blacklist = [
         "电池", "状态栏", "电量", "百分之", "WLAN", "手机信号", "5G", "4G",
-        "通知", "天气", "高德", "淘宝", "浏览器", "手机管家", "振铃器", "静音",
+        "通知", "高德", "淘宝", "浏览器", "手机管家", "振铃器", "静音",
         "返回", "分享", "店铺", "收藏", "客服", "工具栏", "顶部", "拼小圈",
         "¥", "￥", "大促价", "已抢", "假一赔十", "100%正品", "拼单价",
         "狂降", "直接成团", "买过", "次", "图片", "该店", "tronplayer_view", "查看全部"
     ]
 
-    # 二元组匹配
     search_pairs = get_ngram_pairs(search_word)
     for desc in desc_list:
         desc = desc.strip()
@@ -236,7 +255,6 @@ def extract_product_info(xml_content, search_word):
             if len(desc) > len(best_title):
                 best_title = desc
 
-    # 单字兜底
     if not best_title:
         search_chars = get_single_chars(search_word)
         best_count = 0
@@ -255,15 +273,43 @@ def extract_product_info(xml_content, search_word):
                 if len(desc) > len(best_title):
                     best_title = desc
 
-    # 价格 最高=原价 最低=现价
+    # ========================== 【强力修复：价格过滤】 ==========================
     price_pattern = r'[¥￥]\s*(\d+(?:\.\d+)?)'
     all_prices = re.findall(price_pattern, xml_content)
     price_nums = [float(p) for p in all_prices]
+
     original_price = None
     current_price = None
+
     if len(price_nums) > 0:
-        current_price = str(min(price_nums))
-        original_price = str(max(price_nums))
+        # 去重
+        prices = sorted(list(set(price_nums)))
+        valid = []
+
+        # 你定的规则：前3位相同，并且大10倍 → 删掉大的
+        for i in prices:
+            keep = True
+            for j in prices:
+                if i == j:
+                    continue
+                # 10倍关系
+                if max(i, j) >= min(i, j) * 10:
+                    # 转整数，判断前3位
+                    s_i = str(int(round(i)))
+                    s_j = str(int(round(j)))
+                    if len(s_i) >= 3 and len(s_j) >= 3 and s_i[:3] == s_j[:3]:
+                        # 大的那个丢掉
+                        if i > j:
+                            keep = False
+                        break
+            if keep:
+                valid.append(i)
+
+        # 最终有效价格
+        if valid:
+            current_price = str(min(valid))
+            original_price = str(max(valid))
+    # ==========================================================================
 
     return {
         "title": best_title.strip() if best_title else "",

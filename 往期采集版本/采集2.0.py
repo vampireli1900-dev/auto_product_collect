@@ -12,8 +12,8 @@ import re
 d = u2.connect()
 
 # 2. 加载模型
-subsidy_model = YOLO("runs/detect/subsidy_train/weights/best.pt")
-detail_model = YOLO("runs/detect/product_detail_train/weights/best.pt")
+subsidy_model = YOLO("../runs/detect/subsidy_train/weights/best.pt")
+detail_model = YOLO("../runs/detect/product_detail_train/weights/best.pt")
 
 # 3. 初始化OCR
 reader = easyocr.Reader(['ch_sim', 'en'], gpu=False, verbose=False)
@@ -87,7 +87,7 @@ def get_final_price(img_path, is_subsidy):
 def find_and_click_detail(max_scroll=5):
     for i in range(max_scroll):
         d.screenshot("screen.jpg")
-        img = cv2.imread("screen.jpg")
+        img = cv2.imread("../screen.jpg")
         results = detail_model(img, conf=0.1)
 
         for r in results:
@@ -123,7 +123,7 @@ def get_production_date(img_path):
 def get_date_with_retry():
     for i in range(3):
         d.screenshot("screen_date.jpg")
-        date = get_production_date("screen_date.jpg")
+        date = get_production_date("../screen_date.jpg")
         if date:
             return date
         if i < 2:
@@ -143,10 +143,10 @@ def collect_product():
     d.screenshot("screen.jpg")
     print("✅ 已截图")
 
-    is_subsidy = is_subsidy_product("screen.jpg")
+    is_subsidy = is_subsidy_product("../screen.jpg")
     print("📌 是否百亿补贴：", is_subsidy)
 
-    final_price, prices, raw_text = get_final_price("screen.jpg", is_subsidy)
+    final_price, prices, raw_text = get_final_price("../screen.jpg", is_subsidy)
     print("💰 最终价格：", final_price)
     print("📝 价格原文：", raw_text)
 

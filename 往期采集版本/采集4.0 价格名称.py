@@ -3,94 +3,59 @@ import cv2
 from ultralytics import YOLO
 import time
 import re
-import requests  # <-- 新增
-import easyocr
 
 # ====================== 初始化 ======================
 d = u2.connect()
-model = YOLO("runs/detect/pdd_logo_train-2/weights/best.pt")
-subsidy_model = YOLO("runs/detect/subsidy_train/weights/best.pt")
-detail_model = YOLO("runs/detect/product_detail_train/weights/best.pt")
-reader = easyocr.Reader(['ch_sim'], gpu=False)
+model = YOLO("../runs/detect/pdd_logo_train-2/weights/best.pt")
+subsidy_model = YOLO("../runs/detect/subsidy_train/weights/best.pt")
+detail_model = YOLO("../runs/detect/product_detail_train/weights/best.pt")
+
 # ====================== 【商品搜索名单】 ======================
 PRODUCT_LIST = [
-    "SK-II前男友面膜10片",
+    "SK-II前男友面膜",
     "雅诗兰黛小棕瓶",
     "兰蔻小黑瓶",
     "海蓝之谜面霜"
 ]
 
-# ====================== 🔥 LLM 商品匹配校验（新增） ======================
-def is_same_product_by_llm(search_word, product_title):
-    prompt = """
-    请判断：搜索词 和 商品标题 是不是同一个商品。
-
-    规则：
-    1. SK-II 和 SK2 算同一个品牌。
-    2. 功效词（补水、保湿、急救、紧致、抗皱）忽略不看。
-    3. 如果商品标题里包含搜索词的规格（如10片），就算规格一致。
-    4. 品牌 + 产品名 + 规格一致 = 是，否则 = 不是。
-
-    只输出2行，()内填充你的回答，原因要简短，严格按格式，不许加任何其他内容：
-    是否：()
-    原因：()
-
-    搜索词：{search_word}
-    商品标题：{product_title}
-    """.format(search_word=search_word, product_title=product_title)
-
-    try:
-        resp = requests.post(
-            "http://127.0.0.1:11434/api/generate",
-            json={
-                "model": "qwen:4b",  # 你要的 4b
-                "prompt": prompt.strip(),
-                "stream": False,
-                "temperature": 0.0,    # 最严谨，不胡说
-                "top_p": 0.1
-            },
-            timeout=25
-        )
-        result = resp.json()["response"].strip()
-
-        is_match = "是否：是" in result
-        reason = "未识别"
-        for line in result.splitlines():
-            if line.startswith("原因："):
-                reason = line.replace("原因：", "").strip()
-
-        print(f"🔍 AI 判定：{is_match} | 原因：{reason}")
-        return is_match
-
-    except Exception as e:
-        print("⚠️ LLM 调用失败，自动通过")
-        return True  # 失败不影响你的脚本运行
+# 优先级定义
+PRIORITY_MAP = {
+    ("baiyi", "brand"): 4,
+    ("brand",): 3,
+    ("baiyi",): 2,
+    ("global"): 1
+}
 
 
-# ====================== 1. 搜索功能 ======================
+# ====================== 1. 搜索功能（从搜索页开始） ======================
 def search_product(keyword):
     print(f"\n🔍 开始搜索商品：{keyword}")
+    # 1. 从屏幕中间 向下滑动（下拉露出搜索框）—— 这才是对的！
     width, height = d.window_size()
+    # 👇 核心：严格按 height * 200 / 2400 计算搜索框 Y 坐标
     search_y = int(height * 200 / 2400)
+    # 从屏幕中间向下滑动
     d.swipe(width // 2, height // 2, width // 2, height // 2 + 400)
     time.sleep(1)
+    # 点击搜索框（按比例计算）
     d.click(width // 2, search_y)
     time.sleep(0.8)
+    # 清空输入 + 输入新关键词
     d(className="android.widget.EditText").clear_text()
     d(className="android.widget.EditText").set_text(keyword)
     time.sleep(0.8)
+    # 点击搜索
     d(text="搜索", className="android.widget.TextView").click()
     print("✅ 搜索完成，等待列表加载")
-    time.sleep(3)
 
 
 # ====================== 2. 列表页商品标签识别 ======================
 def scan_list_products():
     d.screenshot("list_screen.jpg")
-    img = cv2.imread("list_screen.jpg")
+    img = cv2.imread("../list_screen.jpg")
     results = model(img, conf=0.25)
     debug_img = results[0].plot()
-    cv2.imwrite("debug_detection.jpg", debug_img)
+    cv2.imwrite("../debug_detection.jpg", debug_img)
 
     products = []
     for r in results:
@@ -132,6 +97,7 @@ def get_products_with_tags():
 
 # ====================== 3. 排序 ======================
 def get_priority(tags):
+    # 按优先级从高到低判断：存在即生效
     if "baiyi" in tags and "brand" in tags:
         return 4
     elif "brand" in tags:
@@ -147,13 +113,13 @@ def sort_products_by_priority(products):
     return sorted(products, key=lambda p: get_priority(p["tags"]), reverse=True)
 
 
-# ====================== 4. 补贴判断 ======================
+# ====================== 4. 补贴判断（XML） ======================
 def is_subsidy_product():
     xml = d.dump_hierarchy()
-    return "百亿补贴" in xml
+    return "百亿补贴" in xml or "官方补贴" in xml
 
 
-# ====================== 5. 商品信息提取 ======================
+# ====================== 5. 商品信息提取（XML） ======================
 def extract_product_info(xml_content):
     desc_list = re.findall(r'content-desc="([^"]+)"', xml_content)
     title = ""
@@ -175,78 +141,66 @@ def extract_product_info(xml_content):
 
 
 # ====================== 6. 详情模块 ======================
-def find_and_click_detail(max_scroll=6):
-    for _ in range(max_scroll):
+def find_and_click_detail(max_scroll=5):
+    # ======================
+    # 第一步：YOLO 识别 商品详情模块
+    # ======================
+    for i in range(max_scroll):
+        # 截图 + YOLO 推理
         img = d.screenshot(format="opencv")
-        results = detail_model(img, conf=0.75)
+        results = detail_model(img, conf=0.8)
 
-        target_box = None
+        detail_found = False
+        click_x, click_y = 0, 0
+
+        # 解析识别结果
         for r in results:
             for box in r.boxes:
-                if int(box.cls[0]) == 0:
+                cls = int(box.cls[0])
+                if cls == 0:
+                    # 找到商品详情模块 → 获取中心坐标
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    target_box = (x1, y1, x2, y2)
+                    click_x = (x1 + x2) // 2
+                    click_y = (y1 + y2) // 2
+                    detail_found = True
                     break
-            if target_box:
-                break
 
-        if target_box:
-            x1, y1, x2, y2 = target_box
+        if detail_found:
+            # ======================
+            # 找到 → 点击进入
+            # ======================
+            print("✅ YOLO 找到商品详情模块，点击进入")
+            d.click(click_x, click_y)
+            time.sleep(1.5)
 
-            # ==============================================
-            # 在这里画框：把 YOLO 识别的区域标出来
-            # ==============================================
-            img_show = img.copy()
-            cv2.rectangle(img_show, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(img_show, "DETECT", (x1, y1-10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
+            # ======================
+            # 第二步：进入后滑动找 生产日期/保质期
+            # ======================
+            for j in range(max_scroll):
+                xml = d.dump_hierarchy()
+                if "生产日期" in xml or "保质期" in xml:
+                    print("✅ 找到生产日期/保质期")
+                    return True
+                d.swipe(500, 1800, 500, 600)
+                time.sleep(1)
 
-            # 弹出窗口看 YOLO 框在哪里
-            cv2.imshow("YOLO 检测区域", img_show)
-            cv2.waitKey(1000)   # 显示1秒
-            cv2.destroyAllWindows()
+            # 点进去了但没找到日期
+            return False
 
-            # 裁剪 YOLO 识别到的区域
-            crop = img[y1:y2, x1:x2]
+        # 没找到 → 上滑一次
+        d.swipe(500, 1800, 500, 600)
+        time.sleep(1)
 
-            # 看裁剪后的小图
-            cv2.imshow("裁剪区域 OCR", crop)
-            cv2.waitKey(800)
-            cv2.destroyAllWindows()
-
-            # OCR 识别
-            ocr_text = reader.readtext(crop, detail=0)
-            full_text = ''.join(ocr_text).replace(' ', '')
-            print("OCR 识别结果：", full_text)  # 打印识别文字
-
-            # 校验
-            if any(kw in full_text for kw in ["商品详情", "详情", "商品参数", "查看全部"]):
-                cx, cy = (x1+x2)//2, (y1+y2)//2
-                print("✅ 校验通过，点击")
-                d.click(cx, cy)
-                time.sleep(1.2)
-
-                for _ in range(4):
-                    xml = d.dump_hierarchy()
-                    if any(k in xml for k in ["生产日期", "保质期"]):
-                        print("✅ 找到生产日期")
-                        return True
-                    d.swipe(500, 1700, 500, 700, 0.2)
-                    time.sleep(0.8)
-                return False
-            else:
-                print("❌ 校验不通过，不是目标")
-
-        d.swipe(500, 1800, 500, 600, 0.25)
-        time.sleep(0.7)
-
-    print("未找到商品详情")
+    # 滑了5次都没找到详情模块
+    print("❌ 未找到商品详情模块")
     return False
 
-# ====================== 7. 生产日期 ======================
+
+# ====================== 7. 生产日期（纯正则） ======================
 def get_production_date_from_xml(xml_content):
     match = re.search(r'text="(\d{4}-\d{1,2}-\d{1,2})"', xml_content)
     return match.group(1) if match else None
+
 
 def get_date_with_retry():
     for i in range(3):
@@ -262,7 +216,7 @@ def get_date_with_retry():
 
 
 # ====================== 8. 单个商品采集 ======================
-def collect_single_product(search_word):
+def collect_single_product():
     xml = d.dump_hierarchy(pretty=True)
     product_info = extract_product_info(xml)
     is_subsidy = is_subsidy_product()
@@ -276,15 +230,6 @@ def collect_single_product(search_word):
     print("💰 原价：", original_price)
     print("💰 现价：", current_price)
 
-    # ======================
-    # 🔥 关键：LLM 校验商品是否匹配
-    # ======================
-    print(f"🔍 正在 AI 校验商品是否匹配：{search_word}")
-    # if not is_same_product_by_llm(search_word, title):
-    #     print("❌ AI 判定：商品不匹配，直接跳过")
-    #     return "NOT_MATCH"
-
-    # 匹配才继续走详情
     found_detail = find_and_click_detail()
     production_date = None
     if found_detail:
@@ -302,8 +247,8 @@ def collect_single_product(search_word):
     }
 
 
-# ====================== 9. 批量采集 ======================
-def select_and_collect_best_product(search_word):
+# ====================== 9. 列表商品批量采集 ======================
+def select_and_collect_best_product():
     print("🔍 开始扫描列表页商品标签...")
     products = get_products_with_tags()
     if not products:
@@ -319,22 +264,13 @@ def select_and_collect_best_product(search_word):
     best_product = None
     best_info = None
     time.sleep(1)
-
     for idx, p in enumerate(candidates):
         print(f"\n--- 进入商品 {idx + 1}/{len(candidates)} ---")
         click_x, click_y = p["cx"], p["cy"]
         d.click(click_x, click_y)
         time.sleep(1)
 
-        # 🔥 传入当前搜索词
-        info = collect_single_product(search_word)
-
-        if info == "NOT_MATCH":
-            print("🔙 商品不匹配，返回列表")
-            d.press("back")
-            time.sleep(1.5)
-            continue
-
+        info = collect_single_product()
         production_date = info["produce_date"]
         found_detail = info["found_detail"]
 
@@ -344,6 +280,9 @@ def select_and_collect_best_product(search_word):
                 best_product = p
                 best_info = info
 
+        # ======================
+        # 【核心逻辑：动态返回】
+        # ======================
         if found_detail:
             print("🔙 找到详情，返回2次回到列表")
             d.press("back")
@@ -367,14 +306,16 @@ def main():
     print("🚀 启动自动搜索 + 商品采集程序")
     for product in PRODUCT_LIST:
         search_product(product)
-        select_and_collect_best_product(product)  # 🔥 传入搜索词
+        select_and_collect_best_product()
 
         time.sleep(1)
+
         print(f"\n================================")
         print(f"✅ {product} 全部采集完成")
         print(f"================================")
     print("\n🎉 所有商品名单全部采集完毕！")
 
 
+# ====================== 入口 ======================
 if __name__ == "__main__":
     main()

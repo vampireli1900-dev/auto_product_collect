@@ -9,18 +9,19 @@ import pandas as pd
 import os
 import logging
 import subprocess  # 用于adb命令
+
 logging.disable(logging.WARNING)
 YOLO().verbose = False
 
 # ====================== 初始化 ======================
 d = u2.connect()
-model = YOLO("runs/detect/pdd_logo_train-2/weights/best.pt")
-subsidy_model = YOLO("runs/detect/subsidy_train/weights/best.pt")
-detail_model = YOLO("runs/detect/product_detail_train/weights/best.pt")
+model = YOLO("../runs/detect/pdd_logo_train-2/weights/best.pt")
+subsidy_model = YOLO("../runs/detect/subsidy_train/weights/best.pt")
+detail_model = YOLO("../runs/detect/product_detail_train/weights/best.pt")
 reader = easyocr.Reader(['ch_sim'], gpu=False)
 
 # ====================== 【新增配置项】 ======================
-PRODUCT_LIST_FILE = "搜索名单.xlsx"
+PRODUCT_LIST_FILE = "../搜索名单.xlsx"
 SEARCH_INTERVAL_SECONDS = 40
 PACKAGE_NAME = "com.xunmeng.pinduoduo"  # 拼多多包名
 
@@ -36,13 +37,14 @@ EXCEL_HEADER = [
     "生产日期"
 ]
 
+
 # ====================== 保存Excel ======================
 def save_all_to_excel():
     if not record_list:
         print("⚠️ 暂无采集数据，跳过保存")
         return
     df = pd.DataFrame(record_list, columns=EXCEL_HEADER)
-    file = "商品采集汇总.xlsx"
+    file = "../商品采集汇总.xlsx"
     if os.path.exists(file):
         old_df = pd.read_excel(file)
         df = pd.concat([old_df, df], ignore_index=True)
@@ -66,10 +68,10 @@ def go_to_pinduoduo_home():
         # 备用方案：杀进程重启
         subprocess.run(["adb", "shell", "am", "force-stop", "com.xunmeng.pinduoduo"])
         time.sleep(2)
-        subprocess.run(["adb", "shell", "am", "start", "-n", "com.xunmeng.pinduoduo/com.xunmeng.pinduoduo.ui.activity.MainFrameActivity"])
+        subprocess.run(["adb", "shell", "am", "start", "-n",
+                        "com.xunmeng.pinduoduo/com.xunmeng.pinduoduo.ui.activity.MainFrameActivity"])
         time.sleep(8)
 
-# ====================== 【旧的重启函数删除，用这个】 ======================
 
 # ====================== 读取带续采状态的名单 ======================
 def load_product_list_with_status():
@@ -88,12 +90,14 @@ def load_product_list_with_status():
     print(f"✅ 总商品数：{total} | 已采集：{done} | 待采集：{len(todo)}")
     return todo
 
+
 # ====================== 标记商品为已采集 ======================
 def mark_product_as_done(product_name):
     df = pd.read_excel(PRODUCT_LIST_FILE)
     df.loc[df["货品名称"] == product_name, "状态"] = "已采集"
     df.to_excel(PRODUCT_LIST_FILE, index=False)
     print(f"✅ 已标记完成：{product_name}")
+
 
 # ====================== 🔥 AI语义切割匹配（你原版，完全不动） ======================
 def is_same_product_by_llm(search_word, product_title):
@@ -107,6 +111,7 @@ def is_same_product_by_llm(search_word, product_title):
 
 文本：
 """
+
     def ai_cut(text):
         try:
             resp = requests.post(
@@ -150,6 +155,7 @@ def is_same_product_by_llm(search_word, product_title):
     print(f"[DEBUG] 最终判定: {final}")
     return final
 
+
 # ====================== 1. 搜索功能 ======================
 def search_product(keyword):
     print(f"\n🔍 开始搜索商品：{keyword}")
@@ -166,13 +172,14 @@ def search_product(keyword):
     print("✅ 搜索完成，等待列表加载")
     time.sleep(3)
 
+
 # ====================== 2. 列表页商品标签识别 ======================
 def scan_list_products():
     d.screenshot("list_screen.jpg")
-    img = cv2.imread("list_screen.jpg")
+    img = cv2.imread("../list_screen.jpg")
     results = model(img, conf=0.25)
     debug_img = results[0].plot()
-    cv2.imwrite("debug_detection.jpg", debug_img)
+    cv2.imwrite("../debug_detection.jpg", debug_img)
 
     cv2.imshow("YOLO 列表商品检测", debug_img)
     cv2.waitKey(1000)
@@ -196,6 +203,7 @@ def scan_list_products():
                 products.append({"type": "global", "cx": cx, "cy": cy})
     return products
 
+
 def get_products_with_tags():
     products = scan_list_products()
     grouped = {}
@@ -214,7 +222,8 @@ def get_products_with_tags():
             grouped[(cx, cy)] = {"tags": {p["type"]}, "cx": cx, "cy": cy}
     return list(grouped.values())
 
-# ====================== 3. 优先级排序 ======================
+
+# ====================== 3. 优先级排序 + 全局GLOBAL翻页逻辑 ======================
 def get_priority(tags):
     if "baiyi" in tags and "brand" in tags:
         return 4
@@ -227,20 +236,71 @@ def get_priority(tags):
     else:
         return 0
 
-def sort_products_by_priority(products):
-    return sorted(products, key=lambda p: get_priority(p["tags"]), reverse=True)
+
+def is_all_global(item_list):
+    """判断当前识别到的商品是否全部为global"""
+    for item in item_list:
+        if "baiyi" in item["tags"] or "brand" in item["tags"]:
+            return False
+    return True
+
+
+def scroll_down_once():
+    """单次向下翻页"""
+    d.swipe(500, 1800, 500, 600, 0.3)
+    time.sleep(2.5)
+
+
+def scroll_to_top():
+    """滑动返回列表顶部"""
+    for _ in range(5):
+        d.swipe(500, 600, 500, 1800, 0.3)
+        time.sleep(0.8)
+
+
+def sort_products_by_priority():
+    # 首次检测
+    raw_products = get_products_with_tags()
+
+    # 首次全是global → 严格按你的逻辑：翻1次测1次，翻2次回到顶部再测
+    if is_all_global(raw_products):
+        print("⚠️ 当前页面全部为global标签，开始逐次翻页检测...")
+
+        # 第一次翻页 + 检测
+        scroll_down_once()
+        raw_products = get_products_with_tags()
+
+        # 第二次翻页 + 检测
+        scroll_down_once()
+        raw_products = get_products_with_tags()
+
+        # 翻完2次 → 回到顶部 → 最终检测
+        print("⚠️ 已翻页2次，返回顶部进行最终检测...")
+        scroll_to_top()
+        time.sleep(2)
+        raw_products = get_products_with_tags()
+
+    # 正常优先级排序
+    sorted_products = sorted(raw_products, key=lambda p: get_priority(p["tags"]), reverse=True)
+    # 最终二次兜底：只剩global时截断前2个
+    if is_all_global(sorted_products):
+        sorted_products = sorted_products[:2]
+
+    return sorted_products
+
 
 # ====================== 4. 补贴判断 ======================
 def is_subsidy_product():
     xml = d.dump_hierarchy()
     return "百亿补贴" in xml or "官方补贴" in xml
 
+
 # ====================== 5. 商品名称+价格提取 ======================
 def extract_product_info(xml_content, search_word):
     import re
     def get_ngram_pairs(text, n=2):
         text = re.sub(r'[^a-z0-9\u4e00-\u9fff]', '', text.lower())
-        return [text[i:i+n] for i in range(len(text)-n+1)] if len(text) >= n else [text]
+        return [text[i:i + n] for i in range(len(text) - n + 1)] if len(text) >= n else [text]
 
     def get_single_chars(text):
         text = re.sub(r'[^a-z0-9\u4e00-\u9fff]', '', text.lower())
@@ -288,7 +348,7 @@ def extract_product_info(xml_content, search_word):
                 continue
             if count_chinese(desc) < search_cn_count:
                 continue
-            desc_clean = re.sub(r'[^a-z0-9\u4e00-\u9fff]', '', desc.lower())
+            desc_clean = re.sub(r'[^a-z0-9\u4e00-\u9fff]', '', text.lower())
             match_count = sum(1 for c in search_chars if c in desc_clean)
             if match_count > best_count and match_count > 0:
                 best_count = match_count
@@ -331,6 +391,7 @@ def extract_product_info(xml_content, search_word):
         "current_price": current_price
     }
 
+
 # ====================== 6. 详情模块 ======================
 def find_and_click_detail(max_scroll=6):
     for _ in range(max_scroll):
@@ -349,8 +410,8 @@ def find_and_click_detail(max_scroll=6):
             x1, y1, x2, y2 = target_box
             img_show = img.copy()
             cv2.rectangle(img_show, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(img_show, "DETECT", (x1, y1-10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
+            cv2.putText(img_show, "DETECT", (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
             cv2.imshow("YOLO 检测区域", img_show)
             cv2.waitKey(1000)
             cv2.destroyAllWindows()
@@ -358,32 +419,33 @@ def find_and_click_detail(max_scroll=6):
             ocr_text = reader.readtext(crop, detail=0)
             full_text = ''.join(ocr_text).replace(' ', '')
             if any(kw in full_text for kw in ["商品详情", "详情"]):
-                cx, cy = (x1+x2)//2, (y1+y2)//2
+                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
                 d.click(cx, cy)
                 time.sleep(1.2)
-                for _ in range(4):
-                    xml = d.dump_hierarchy()
-                    if any(k in xml for k in ["生产日期", "保质期"]):
-                        return True
-                    d.swipe(500, 1700, 500, 700, 0.2)
-                    time.sleep(0.8)
+                xml = d.dump_hierarchy()
+                if any(k in xml for k in ["生产日期", "保质期"]):
+                    return True
+                time.sleep(0.8)
+                d.press("back")
                 return False
         d.swipe(500, 1800, 500, 600, 0.25)
         time.sleep(0.7)
     return False
+
 
 # ====================== 7. 生产日期 ======================
 def get_production_date_from_xml(xml_content):
     match = re.search(r'text="(\d{4}-\d{1,2}-\d{1,2})"', xml_content)
     return match.group(1) if match else None
 
+
 def get_date_with_retry():
-        xml = d.dump_hierarchy(pretty=True)
-        pd = get_production_date_from_xml(xml)
-        if pd:
-            return pd
-        else:
-            return None
+    xml = d.dump_hierarchy(pretty=True)
+    pd = get_production_date_from_xml(xml)
+    if pd:
+        return pd
+    else:
+        return None
 
 
 # ====================== 8. 单个商品采集 ======================
@@ -414,7 +476,7 @@ def collect_single_product(search_word):
 
     record_list.append(row_data)
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("📋 本条采集记录：")
     print(f"货品名称：{title}")
     print(f"搜索关键词：{search_word}")
@@ -423,28 +485,29 @@ def collect_single_product(search_word):
     print(f"现价：{current_price}")
     print(f"是否百亿补贴：{subsidy_str}")
     print(f"生产日期：{produce_date}")
-    print("="*80)
-
+    print("=" * 80)
+    match = "MATCH"
     if not is_same_product_by_llm(search_word, title):
-        print("❌ AI 判定：商品不匹配")
-        return "NOT_MATCH"
+        match = "NOT_MATCH"
 
     return {
         "title": title,
         "subsidy": is_subsidy,
         "produce_date": produce_date,
-        "found_detail": found_detail
+        "found_detail": found_detail,
+        "match": match
     }
+
 
 # ====================== 9. 遍历同优先级全部商品 ======================
 def select_and_collect_best_product(search_word):
     print("🔍 开始扫描列表页商品标签...")
-    products = get_products_with_tags()
-    if not products:
+    # 调用新版：自带翻页+全global判断
+    sorted_products = sort_products_by_priority()
+    if not sorted_products:
         print("❌ 未识别到任何标签商品")
         return None
 
-    sorted_products = sort_products_by_priority(products)
     highest_priority = get_priority(sorted_products[0]["tags"])
     candidates = [p for p in sorted_products if get_priority(p["tags"]) == highest_priority]
     print(f"✅ 识别到 {len(candidates)} 个最高优先级商品，全部采集")
@@ -454,19 +517,20 @@ def select_and_collect_best_product(search_word):
         d.click(p["cx"], p["cy"])
         time.sleep(1)
         res = collect_single_product(search_word)
-        if res == "NOT_MATCH":
+        if res['match'] == "NOT_MATCH":
+            print('AI不匹配')
+        if res["found_detail"]:
+            time.sleep(0.5)
             d.press("back")
             time.sleep(1.5)
+            d.press("back")
         else:
-            if res["found_detail"]:
-                d.press("back")
-                time.sleep(0.5)
-                d.press("back")
-                time.sleep(1.5)
-            else:
-                d.press("back")
-                time.sleep(1.5)
+            time.sleep(0.5)
+            d.press("back")
+
+
     return True
+
 
 # ====================== 【自动异常重启 + 断点续采】主循环 ======================
 def main():
@@ -496,10 +560,11 @@ def main():
 
             except Exception as e:
                 print(f"\n❌ 采集发生异常：{str(e)}")
-                go_to_pinduoduo_home()  # 自动重启拼多多
+                go_to_pinduoduo_home()
                 print(f"🔄 重启完成，重新采集：{keyword}")
 
     print("\n🎉 全部商品采集任务结束！")
+
 
 if __name__ == "__main__":
     main()

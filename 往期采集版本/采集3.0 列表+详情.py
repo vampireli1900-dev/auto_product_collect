@@ -7,9 +7,9 @@ import easyocr
 
 # ====================== 初始化 ======================
 d = u2.connect()
-model = YOLO("runs/detect/pdd_logo_train-2/weights/best.pt")
-subsidy_model = YOLO("runs/detect/subsidy_train/weights/best.pt")  # 来自代码二
-detail_model = YOLO("runs/detect/product_detail_train/weights/best.pt")
+model = YOLO("../runs/detect/pdd_logo_train-2/weights/best.pt")
+subsidy_model = YOLO("../runs/detect/subsidy_train/weights/best.pt")  # 来自代码二
+detail_model = YOLO("../runs/detect/product_detail_train/weights/best.pt")
 reader = easyocr.Reader(['ch_sim', 'en'], gpu=False, verbose=False)
 
 # 优先级定义
@@ -29,11 +29,11 @@ PRICE_X2, PRICE_Y2 = 440, 580
 # ====================== 1. 列表页商品标签识别（你原版，完全保留） ======================
 def scan_list_products():
     d.screenshot("list_screen.jpg")
-    img = cv2.imread("list_screen.jpg")
+    img = cv2.imread("../list_screen.jpg")
     results = model(img, conf=0.25)
     # ====================== 调试：保存带检测框的图片 ======================
     debug_img = results[0].plot()  # 画出框、标签、置信度
-    cv2.imwrite("debug_detection.jpg", debug_img)  # 保存到本地
+    cv2.imwrite("../debug_detection.jpg", debug_img)  # 保存到本地
 
     products = []
     for r in results:
@@ -143,7 +143,7 @@ def get_final_price(img_path, is_subsidy):
 def find_and_click_detail(max_scroll=5):
     for i in range(max_scroll):
         d.screenshot("screen.jpg")
-        img = cv2.imread("screen.jpg")
+        img = cv2.imread("../screen.jpg")
         results = detail_model(img, conf=0.1)
         for r in results:
             for box in r.boxes:
@@ -172,7 +172,7 @@ def get_production_date(img_path):
 def get_date_with_retry():
     for i in range(3):
         d.screenshot("screen_date.jpg")
-        date = get_production_date("screen_date.jpg")
+        date = get_production_date("../screen_date.jpg")
         if date:
             return date
         if i < 2:
@@ -185,11 +185,11 @@ def get_date_with_retry():
 def collect_single_product():
     # 1. 截图识别补贴
     d.screenshot("screen.jpg")
-    is_subsidy = is_subsidy_product("screen.jpg")
+    is_subsidy = is_subsidy_product("../screen.jpg")
     print("📌 是否百亿补贴：", is_subsidy)
 
     # 2. 识别价格
-    final_price, prices, raw_text = get_final_price("screen.jpg", is_subsidy)
+    final_price, prices, raw_text = get_final_price("../screen.jpg", is_subsidy)
     print("💰 最终价格：", final_price)
 
     # 3. 找详情模块 + 识别日期

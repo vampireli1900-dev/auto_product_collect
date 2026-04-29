@@ -13,14 +13,19 @@ YOLO().verbose = False            # 关闭 YOLO 检测打印
 
 # ====================== 初始化 ======================
 d = u2.connect()
-model = YOLO("runs/detect/pdd_logo_train-2/weights/best.pt")
-subsidy_model = YOLO("runs/detect/subsidy_train/weights/best.pt")
-detail_model = YOLO("runs/detect/product_detail_train/weights/best.pt")
+model = YOLO("../runs/detect/pdd_logo_train-2/weights/best.pt")
+subsidy_model = YOLO("../runs/detect/subsidy_train/weights/best.pt")
+detail_model = YOLO("../runs/detect/product_detail_train/weights/best.pt")
 reader = easyocr.Reader(['ch_sim'], gpu=False)
 
-# ====================== 【新增配置项】 ======================
-PRODUCT_LIST_FILE = "搜索名单.xlsx"    # 商品名单Excel
-SEARCH_INTERVAL_SECONDS = 5           # 每个商品采集完等待秒数
+# ====================== 【商品搜索名单】 ======================
+PRODUCT_LIST = [
+    "娇韵诗 弹簧两件套",
+    "娇韵诗 美白三件套",
+    "娇韵诗 弹簧三件套",
+    "娇韵诗 孕妇两件套",
+    "碧欧泉 男士水动力3件套"
+]
 
 # ====================== 全局存储所有商品记录 ======================
 record_list = []
@@ -41,43 +46,14 @@ def save_all_to_excel():
         print("⚠️ 暂无采集数据，跳过保存")
         return
     df = pd.DataFrame(record_list, columns=EXCEL_HEADER)
-    file = "商品采集汇总.xlsx"
+    file = "../商品采集汇总.xlsx"
     if os.path.exists(file):
         old_df = pd.read_excel(file)
         df = pd.concat([old_df, df], ignore_index=True)
     df.to_excel(file, index=False)
     print(f"\n📁 已批量保存全部记录至：{file}，当前总行数：{len(df)}")
 
-# ====================== 【新增】读取带续采状态的商品名单 ======================
-def load_product_list_with_status():
-    if not os.path.exists(PRODUCT_LIST_FILE):
-        print(f"❌ 未找到名单文件：{PRODUCT_LIST_FILE}")
-        return []
-
-    df = pd.read_excel(PRODUCT_LIST_FILE)
-
-    if "货品名称" not in df.columns:
-        print("❌ Excel必须包含列：货品名称")
-        return []
-
-    if "状态" not in df.columns:
-        df["状态"] = "未采集"
-
-    todo = df[df["状态"] == "未采集"]["货品名称"].dropna().astype(str).tolist()
-    total = len(df)
-    done = len(df[df["状态"] == "已采集"])
-
-    print(f"✅ 总商品数：{total} | 已采集：{done} | 待采集：{len(todo)}")
-    return todo
-
-# ====================== 【新增】标记商品为已采集 ======================
-def mark_product_as_done(product_name):
-    df = pd.read_excel(PRODUCT_LIST_FILE)
-    df.loc[df["货品名称"] == product_name, "状态"] = "已采集"
-    df.to_excel(PRODUCT_LIST_FILE, index=False)
-    print(f"✅ 已标记完成：{product_name}")
-
-# ====================== 🔥 AI语义切割匹配（Qwen:4b）—— 你原版，完全不动 ======================
+# ====================== 🔥 AI语义切割匹配（Qwen:4b） ======================
 def is_same_product_by_llm(search_word, product_title):
     cut_prompt = """
 请把下面的文本，按中文语义切成独立词语单元。
@@ -92,24 +68,22 @@ def is_same_product_by_llm(search_word, product_title):
     def ai_cut(text):
         try:
             resp = requests.post(
-                "http://127.0.0.1:11434/api/generate",
+                "http127.0.0.1:11434/api/generate",
                 json={
                     "model": "qwen:4b",
                     "prompt": cut_prompt + text,
                     "stream": False,
                     "temperature": 0.0,
                     "top_p": 0.1,
-                    "context": []
+                    "context": []  # 强制清空上下文
                 },
                 timeout=20
             )
             raw = resp.json()["response"].strip()
             clean = re.sub(r'[^\w\s]', ' ', raw).lower()
             return [w for w in clean.split() if w]
-        except Exception as e:
-            print('❌ AI对话异常：', str(e))
-            clean_text = re.sub(r'[^a-z0-9\u4e00-\u9fff]', '', text.lower())
-            return [c for c in clean_text]
+        except:
+            return re.sub(r'[^a-z0-9\u4e00-\u9fff]','',text.lower())
 
     title_units = ai_cut(product_title)
     search_units = ai_cut(search_word)
@@ -132,7 +106,7 @@ def is_same_product_by_llm(search_word, product_title):
     print(f"[DEBUG] 最终判定: {final}")
     return final
 
-# ====================== 1. 搜索功能（不动） ======================
+# ====================== 1. 搜索功能 ======================
 def search_product(keyword):
     print(f"\n🔍 开始搜索商品：{keyword}")
     width, height = d.window_size()
@@ -148,13 +122,13 @@ def search_product(keyword):
     print("✅ 搜索完成，等待列表加载")
     time.sleep(3)
 
-# ====================== 2. 列表页商品标签识别（不动） ======================
+# ====================== 2. 列表页商品标签识别 ======================
 def scan_list_products():
     d.screenshot("list_screen.jpg")
-    img = cv2.imread("list_screen.jpg")
+    img = cv2.imread("../list_screen.jpg")
     results = model(img, conf=0.25)
     debug_img = results[0].plot()
-    cv2.imwrite("debug_detection.jpg", debug_img)
+    cv2.imwrite("../debug_detection.jpg", debug_img)
 
     cv2.imshow("YOLO 列表商品检测", debug_img)
     cv2.waitKey(1000)
@@ -196,7 +170,7 @@ def get_products_with_tags():
             grouped[(cx, cy)] = {"tags": {p["type"]}, "cx": cx, "cy": cy}
     return list(grouped.values())
 
-# ====================== 3. 优先级排序（不动） ======================
+# ====================== 3. 优先级排序 ======================
 def get_priority(tags):
     if "baiyi" in tags and "brand" in tags:
         return 4
@@ -212,12 +186,12 @@ def get_priority(tags):
 def sort_products_by_priority(products):
     return sorted(products, key=lambda p: get_priority(p["tags"]), reverse=True)
 
-# ====================== 4. 补贴判断（不动） ======================
+# ====================== 4. 补贴判断 ======================
 def is_subsidy_product():
     xml = d.dump_hierarchy()
     return "百亿补贴" in xml or "官方补贴" in xml
 
-# ====================== 5. 商品名称+价格提取（不动） ======================
+# ====================== 5. 商品名称+价格提取（二元+单字兜底+中文数量规则） ======================
 def extract_product_info(xml_content, search_word):
     import re
     def get_ngram_pairs(text, n=2):
@@ -239,12 +213,13 @@ def extract_product_info(xml_content, search_word):
 
     blacklist = [
         "电池", "状态栏", "电量", "百分之", "WLAN", "手机信号", "5G", "4G",
-        "通知", "高德", "淘宝", "浏览器", "手机管家", "振铃器", "静音",
+        "通知", "天气", "高德", "淘宝", "浏览器", "手机管家", "振铃器", "静音",
         "返回", "分享", "店铺", "收藏", "客服", "工具栏", "顶部", "拼小圈",
         "¥", "￥", "大促价", "已抢", "假一赔十", "100%正品", "拼单价",
         "狂降", "直接成团", "买过", "次", "图片", "该店", "tronplayer_view", "查看全部"
     ]
 
+    # 二元组匹配
     search_pairs = get_ngram_pairs(search_word)
     for desc in desc_list:
         desc = desc.strip()
@@ -261,6 +236,7 @@ def extract_product_info(xml_content, search_word):
             if len(desc) > len(best_title):
                 best_title = desc
 
+    # 单字兜底
     if not best_title:
         search_chars = get_single_chars(search_word)
         best_count = 0
@@ -279,33 +255,15 @@ def extract_product_info(xml_content, search_word):
                 if len(desc) > len(best_title):
                     best_title = desc
 
+    # 价格 最高=原价 最低=现价
     price_pattern = r'[¥￥]\s*(\d+(?:\.\d+)?)'
     all_prices = re.findall(price_pattern, xml_content)
     price_nums = [float(p) for p in all_prices]
-
     original_price = None
     current_price = None
-
     if len(price_nums) > 0:
-        prices = sorted(list(set(price_nums)))
-        valid = []
-        for i in prices:
-            keep = True
-            for j in prices:
-                if i == j:
-                    continue
-                if max(i, j) >= min(i, j) * 10:
-                    s_i = str(int(round(i)))
-                    s_j = str(int(round(j)))
-                    if len(s_i) >= 3 and len(s_j) >= 3 and s_i[:3] == s_j[:3]:
-                        if i > j:
-                            keep = False
-                        break
-            if keep:
-                valid.append(i)
-        if valid:
-            current_price = str(min(valid))
-            original_price = str(max(valid))
+        current_price = str(min(price_nums))
+        original_price = str(max(price_nums))
 
     return {
         "title": best_title.strip() if best_title else "",
@@ -313,7 +271,7 @@ def extract_product_info(xml_content, search_word):
         "current_price": current_price
     }
 
-# ====================== 6. 详情模块（不动） ======================
+# ====================== 6. 详情模块 ======================
 def find_and_click_detail(max_scroll=6):
     for _ in range(max_scroll):
         img = d.screenshot(format="opencv")
@@ -354,7 +312,7 @@ def find_and_click_detail(max_scroll=6):
         time.sleep(0.7)
     return False
 
-# ====================== 7. 生产日期（不动） ======================
+# ====================== 7. 生产日期 ======================
 def get_production_date_from_xml(xml_content):
     match = re.search(r'text="(\d{4}-\d{1,2}-\d{1,2})"', xml_content)
     return match.group(1) if match else None
@@ -369,7 +327,7 @@ def get_date_with_retry():
         time.sleep(1)
     return None
 
-# ====================== 8. 单个商品采集（不动） ======================
+# ====================== 8. 单个商品采集 + 即时存入记录 ======================
 def collect_single_product(search_word):
     xml = d.dump_hierarchy(pretty=True)
     product_info = extract_product_info(xml, search_word)
@@ -381,10 +339,14 @@ def collect_single_product(search_word):
 
     subsidy_str = "是" if is_subsidy else "否"
 
+    # 进入详情拿生产日期
     found_detail = find_and_click_detail()
     produce_date = get_date_with_retry() if found_detail else ""
+
+    # 规格暂时空置
     spec_str = ""
 
+    # 🔥 拆分：原价、现价 独立两列
     row_data = [
         title,
         search_word,
@@ -395,8 +357,10 @@ def collect_single_product(search_word):
         produce_date
     ]
 
+    # 存入全局列表
     record_list.append(row_data)
 
+    # 控制台打印
     print("\n" + "="*80)
     print("📋 本条采集记录：")
     print(f"货品名称：{title}")
@@ -408,6 +372,7 @@ def collect_single_product(search_word):
     print(f"生产日期：{produce_date}")
     print("="*80)
 
+    # AI匹配校验
     if not is_same_product_by_llm(search_word, title):
         print("❌ AI 判定：商品不匹配")
         return "NOT_MATCH"
@@ -419,7 +384,7 @@ def collect_single_product(search_word):
         "found_detail": found_detail
     }
 
-# ====================== 9. 遍历同优先级全部商品（不动） ======================
+# ====================== 9. 遍历同优先级全部商品，全部采集 ======================
 def select_and_collect_best_product(search_word):
     print("🔍 开始扫描列表页商品标签...")
     products = get_products_with_tags()
@@ -437,6 +402,7 @@ def select_and_collect_best_product(search_word):
         d.click(p["cx"], p["cy"])
         time.sleep(1)
         res = collect_single_product(search_word)
+        # 返回列表
         if res == "NOT_MATCH":
             d.press("back")
             time.sleep(1.5)
@@ -451,32 +417,18 @@ def select_and_collect_best_product(search_word):
                 time.sleep(1.5)
     return True
 
-# ====================== 10. 主循环（已改造：续采 + 间隔 + 标记） ======================
+# ====================== 10. 主循环 ======================
 def main():
-    print("🚀 启动自动搜索 + 全商品采集 + Excel导出 + 中断续采")
-
-    # 读取待采集列表
-    PRODUCT_LIST = load_product_list_with_status()
-    if not PRODUCT_LIST:
-        print("🎉 所有商品已全部采集完成！")
-        return
-
+    print("🚀 启动自动搜索 + 全商品采集 + Excel导出")
     for keyword in PRODUCT_LIST:
         search_product(keyword)
         select_and_collect_best_product(keyword)
-
-        # 标记已完成并保存
-        mark_product_as_done(keyword)
-        save_all_to_excel()
-
-        # 商品间等待
-        print(f"\n⏳ 等待 {SEARCH_INTERVAL_SECONDS} 秒后继续...")
-        time.sleep(SEARCH_INTERVAL_SECONDS)
-
+        time.sleep(1)
         print(f"\n=====================================")
         print(f"✅ 【{keyword}】全部商品采集完成")
         print(f"=====================================")
-
+    # 全部跑完统一保存Excel
+    save_all_to_excel()
     print("\n🎉 全部商品采集任务结束！")
 
 if __name__ == "__main__":
