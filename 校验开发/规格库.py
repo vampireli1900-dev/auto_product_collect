@@ -171,4 +171,4 @@ def extract_and_export(file_path):
 
 # ====================== 运行 ======================
 if __name__ == "__main__":
-    extract_and_export("搜索名单.xlsx")
+    extract_and_export("../搜索名单.xlsx")

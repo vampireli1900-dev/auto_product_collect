@@ -1,8 +1,8 @@
 import pandas as pd
-import re
 
-# ====================== 你确认好的品牌库 ======================
+# ====================== 【你的品牌字典】 ======================
 brand_lib = {
+    # 奢护护肤
     "赫莲娜": ["HR", "HelenaRubinstein", "Helena Rubinstein", "赫莲娜"],
     "海蓝之谜": ["LM", "LaMer", "La Mer", "腊梅", "海蓝"],
     "莱珀妮": ["LP", "LaPrairie", "La Prairie", "莱珀妮", "莱珀"],
@@ -20,16 +20,19 @@ brand_lib = {
     "大宝": ["Embryolisse", "大宝"],
     "薇迪薇奇": ["VidiVici", "Vidi Vici", "薇迪", "薇迪薇奇"],
 
-    "肌肤之钥": ["CPB", "CleDePeauBeaute", "Cle de Peau Beauté", "肌肤之钥", "cledepece"],
+    # 日韩护肤
+    "肌肤之钥": ["CPB", "CleDePeauBeaute", "Cle de Peau Beauté", "肌肤之钥", "cledepeau"],
     "SK-II": ["SK2", "SKII", "SK-II"],
     "资生堂": ["Shiseido", "资生", "资生堂"],
     "黛珂": ["Decorte", "Decorté", "黛珂"],
     "城野医生": ["DrCiLabo", "Dr.Ci:Labo", "城野", "城野医生"],
+
     "茵芙莎": ["IPSA", "茵芙", "茵芙莎"],
     "宝丽": ["POLA", "宝丽"],
     "兰芝": ["Laneige", "兰芝"],
     "植村秀": ["ShuUemura", "Shu Uemura", "植村秀"],
 
+    # 彩妆
     "汤姆福特": ["TF", "TomFord", "Tom Ford", "汤姆福特"],
     "圣罗兰": ["YSL", "YvesSaintLaurent", "Yves Saint Laurent", "圣罗", "圣罗兰"],
     "魅可": ["MAC", "M.A.C", "魅可"],
@@ -40,9 +43,11 @@ brand_lib = {
     "衰败城市": ["UrbanDecay", "Urban Decay", "衰败", "衰败城市"],
     "罗拉": ["LauraMercier", "Laura Mercier", "罗拉"],
 
-    "后": ["WHOO", "TheHistoryOfWhoo", "The History Of Whoo", "后"],
+    # 韩系
+    "后": ["WHOO", "TheHistoryOfWhoo", "The History Of Whoo", "后",],
     "雪花秀": ["Sulwhasoo", "雪花", "后雪", "雪花秀"],
 
+    # 香水 / 轻奢香氛
     "祖玛珑": ["JM", "JoMalone", "Jo Malone", "祖马龙", "祖玛", "祖玛珑"],
     "芦丹氏": ["SL", "SergeLutens", "Serge Lutens", "芦丹氏"],
     "百瑞德": ["Byredo", "百瑞", "百瑞德"],
@@ -65,6 +70,7 @@ brand_lib = {
     "缪缪": ["MiuMiu", "miumiu", "Miu Miu", "缪缪"],
     "香奈儿": ["Chanel", "香奈", "香奈儿"],
 
+    # 洗护 / 身体 / 生活类
     "卡诗": ["Kerastase", "Kérastase", "卡诗"],
     "欧舒丹": ["Loccitane", "L'Occitane", "欧舒", "欧舒丹"],
     "欧莱雅": ["Loreal", "L'Oréal", "欧莱", "欧莱雅"],
@@ -73,6 +79,7 @@ brand_lib = {
     "拉夫劳伦": ["RalphLauren", "Ralph Lauren", "拉夫", "拉夫劳伦"],
     "馥蕾诗": ["Fresh", "馥蕾", "馥蕾诗"],
 
+    # 补充定制品牌
     "伟博": ["Webber", "伟博"],
     "慕拉得塑": ["Murad", "慕拉", "慕拉得"],
     "未来驱蚊": ["VAPE", "未來", "未来驅蚊"],
@@ -80,101 +87,69 @@ brand_lib = {
     "旧街场": ["OldTown", "Old Town", "旧街场"],
     "费列罗": ["Ferrero", "费列", "费列罗"]
 }
-
-
-# ====================== 【终极规格提取：全覆盖 + 优先级 + 匹配后删除】 ======================
-def extract_specs(text):
-    text = str(text).strip()
-    temp_text = text
-    result = []
-    import re
-    import pdb  # 调试库
-
-    # ====================== 你的原版规则 完全不动 ======================
-    rules = [
-        # 1. 最高：# 完整色号（L3#, #666, 610#）
-        r'[A-Za-z0-9]+#',
-        r'#[A-Za-z0-9]+',
-
-        # 2. 字母+数字完整型号（1W0, 2C0, NC12, PO-01）
-        r'[0-9][A-Za-z][0-9]',
-        r'[A-Za-z]+[0-9]+[A-Za-z]*',
-        r'(?<!\.)\d+[A-Za-z]+',
-        r'[A-Za-z]+-[0-9]+',
-
-        # 3. xx色 / xx号
-        r'\d+色',
-        r'\d+号',
-
-        # 4. 完整容量（4.5g, 400ml, 1.5g）
-        r'\d+\.\d+\s*[mlgMLG]+',
-        r'\d+\s*[mlgMLG]+',
-        r'\d+\s*[条粒支瓶盒装片]',
-
-        # 5. 香水类型
-        r'EDT|EDP|浓香|淡香',
-
-        # 6. 套装
-        r'对装|两支装|三支装|两瓶装|双支装|\*2|x2|X2',
-
-        # 7. 版本/年份（必须匹配，不遗漏）
-        r'新款|新版|旧版|经典款',
-        r'\d+款|\d+年',
-
-        # 8. 最后：纯数字（最低优先级）
-        r'(?<![A-Za-z])\d+\.?\d*(?![A-Za-z#])',
-    ]
-
-    # ====================== 关键：遇到 4.5g 自动断点调试 ======================
-    # if re.search(r'\d+\.\d+[gml]', temp_text, re.I):
-    #     print("\n⚠️  检测到 4.5g 格式，自动进入调试断点！")
-
-    # 正常匹配流程
-    for pattern in rules:
-        matches = re.findall(pattern, temp_text, re.IGNORECASE)
-        for val in matches:
-            val = val.strip()
-            if len(val) < 1 or val in result:
-                continue
-            result.append(val)
-            temp_text = temp_text.replace(val, " ")
-
-    # 去重
-    final = []
-    seen = set()
-    for item in result:
-        if item not in seen:
-            seen.add(item)
-            final.append(item)
-
-    return " | ".join(final) if final else "无规格"
-
-
-# ====================== 主函数 ======================
-def extract_and_export(file_path):
+# ====================== 【检测函数】 ======================
+def check_unmatched_brands(file_path):
+    # 读取Excel
     df = pd.read_excel(file_path)
-    df_out = df.copy()
 
-    print("=" * 80)
-    print("【规格型号提取结果】")
-    print("=" * 80)
+    # 必须包含的列
+    required_cols = ["货品名称", "关键词", "序号"]
+    for col in required_cols:
+        if col not in df.columns:
+            print(f"❌ 表格缺少列：{col}")
+            return
 
-    spec_list = []
+    # 把所有品牌别名展开成一个列表
+    all_brand_keywords = []
+    for names in brand_lib.values():
+        all_brand_keywords.extend(names)
+
+    # 统一转小写，避免大小写问题
+    lower_brands = [b.lower() for b in all_brand_keywords]
+
+    # 未匹配列表
+    unmatched = []
+
+    # 逐行检查
     for idx, row in df.iterrows():
-        name = str(row["货品名称"]).strip()
-        spec = extract_specs(name)
-        spec_list.append(spec)
+        product_name = str(row["货品名称"]).lower()
+        keyword = str(row["关键词"]).lower()
+        serial = row["序号"]
 
-        print(f"序号 {row['序号']}")
-        print(f"原名：{name}")
-        print(f"规格：{spec}")
-        print("-" * 80)
+        # 判断：品牌是否出现在 货品名称 或 关键词 中
+        matched = False
+        for b in lower_brands:
+            if b in product_name or b in keyword:
+                matched = True
+                break
 
-    df_out["规格型号"] = spec_list
-    df_out.to_excel("已提取规格型号.xlsx", index=False)
-    print("\n✅ 提取完成！已输出：已提取规格型号.xlsx")
+        if not matched:
+            unmatched.append({
+                "序号": serial,
+                "货品名称": row["货品名称"],
+                "关键词": row["关键词"],
+                "未匹配原因": "未在品牌库中找到任何匹配"
+            })
 
+    # ====================== 输出结果 ======================
+    print("\n" + "=" * 60)
+    print(f"✅ 总共检查行数：{len(df)}")
+    print(f"⚠️ 未匹配品牌条目数量：{len(unmatched)}")
+    print("=" * 60)
+
+    if unmatched:
+        print("\n【未匹配品牌的条目清单】")
+        for item in unmatched:
+            print(f"序号 {item['序号']} | {item['货品名称']} | {item['关键词']}")
+
+        # 导出未匹配条目为新Excel
+        unmatched_df = pd.DataFrame(unmatched)
+        unmatched_df.to_excel("未匹配品牌条目.xlsx", index=False)
+        print("\n📁 已导出未匹配条目 → 未匹配品牌条目.xlsx")
+    else:
+        print("\n🎉 所有条目都匹配到品牌！无异常数据")
 
 # ====================== 运行 ======================
 if __name__ == "__main__":
-    extract_and_export("搜索名单.xlsx")
+    # 把你的Excel文件名改这里
+    check_unmatched_brands("../搜索名单.xlsx")
