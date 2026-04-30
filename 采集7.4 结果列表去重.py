@@ -403,43 +403,45 @@ def extract_product_info(xml_content, search_word):
 
 
 # ====================== 6. 详情模块 ======================
-def find_and_click_detail(max_scroll=6):
+def find_and_click_detail(max_scroll=7):
     for _ in range(max_scroll):
         img = d.screenshot(format="opencv")
-        results = detail_model(img, conf=0.75)
-        target_box = None
-        for r in results:
-            for box in r.boxes:
-                if int(box.cls[0]) == 0:
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    target_box = (x1, y1, x2, y2)
+        res = detail_model(img, conf=0.75)
+        box = None
+
+        for r in res:
+            for b in r.boxes:
+                if int(b.cls[0]) == 0:
+                    box = tuple(map(int, b.xyxy[0]))
                     break
-            if target_box:
+            if box:
                 break
-        if target_box:
-            x1, y1, x2, y2 = target_box
-            img_show = img.copy()
-            cv2.rectangle(img_show, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(img_show, "DETECT", (x1, y1 - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-            # cv2.imshow("YOLO 检测区域", img_show)
-            cv2.waitKey(1000)
-            cv2.destroyAllWindows()
-            crop = img[y1:y2, x1:x2]
-            ocr_text = reader.readtext(crop, detail=0)
-            full_text = ''.join(ocr_text).replace(' ', '')
-            if any(kw in full_text for kw in ["商品详情", "详情"]):
-                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+
+        if box:
+            x1, y1, x2, y2 = box
+            crop_img = img[y1:y2, x1:x2]
+
+            ocr_result = reader.readtext(crop_img)
+            full_text = ""
+            for item in ocr_result:
+                full_text += item[1]
+
+            if "商品详情" in full_text:
+                cx = (x1 + x2) // 2
+                cy = (y1 + y2) // 2
                 d.click(cx, cy)
-                time.sleep(1.2)
-                xml = d.dump_hierarchy()
-                if any(k in xml for k in ["生产日期", "保质期"]):
+                time.sleep(1.5)
+
+                page_xml = d.dump_hierarchy()
+                if "生产日期" in page_xml:
                     return True
-                time.sleep(0.8)
-                d.press("back")
-                return False
-        d.swipe(500, 1800, 500, 600, 0.25)
-        time.sleep(0.7)
+                else:
+                    d.press("back")
+                    return False
+
+        d.swipe(500, 1600, 500, 900, 0.25)
+        time.sleep(0.8)
+
     return False
 
 

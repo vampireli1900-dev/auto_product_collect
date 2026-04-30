@@ -17,7 +17,7 @@ brand_lib = {
     "碧欧泉": ["Biotherm", "碧欧泉"],
     "薇姿": ["Vichy", "薇姿"],
     "德美乐嘉": ["Dermalogica",  "德美乐嘉"],
-    "雅诗兰黛": ["EsteeLauder", "Estée Lauder", "ESTEE LAUDER", "雅诗兰黛"],
+    "雅诗兰黛": ["EsteeLauder", "Estée Lauder", "ESTEE LAUDER", "雅诗兰黛", "红石榴"],
     "大宝": ["Embryolisse", "大宝"],
     "薇迪薇奇": ["VidiVici", "Vidi Vici", "薇迪薇奇"],
 
@@ -25,9 +25,10 @@ brand_lib = {
     "肌肤之钥": ["CPB", "CleDePeauBeaute", "Cle de Peau Beauté", "肌肤之钥", "cledepeau"],
     "SK-II": ["SK2", "SKII", "SK-II"],
     "资生堂": ["Shiseido",  "资生堂"],
+    "安耐晒": ["安耐晒"],
     "黛珂": ["Decorte", "Decorté", "黛珂"],
     "城野医生": ["DrCiLabo", "Dr.Ci:Labo", "城野医生"],
-    "茵芙莎": ["IPSA",  "茵芙莎"],
+    "茵芙莎": ["IPSA", "茵芙莎", "茵芙纱"],
     "宝丽": ["POLA", "宝丽"],
     "兰芝": ["Laneige", "兰芝"],
     "植村秀": ["ShuUemura", "Shu Uemura", "植村秀"],
@@ -37,14 +38,14 @@ brand_lib = {
     "圣罗兰": ["YSL", "YvesSaintLaurent", "Yves Saint Laurent",  "圣罗兰"],
     "魅可": ["MAC", "M.A.C", "魅可"],
     "纳斯": ["NARS", "纳斯"],
-    "芭比布朗": ["BobbiBrown", "Bobbi Brown", "BB",  "芭比布朗"],
+    "芭比布朗": ["BobbiBrown", "Bobbi Brown", "BB", "芭比布朗", "芭比波朗"],
     "纪梵希": ["Givenchy", "纪梵希"],
     "苏秘": ["Sum37", "Su:m37", "苏秘", "苏秘37"],
     "衰败城市": ["UrbanDecay", "Urban Decay", "衰败城市"],
     "罗拉": ["LauraMercier", "Laura Mercier", "罗拉"],
 
     # 韩系
-    "后": ["WHOO", "TheHistoryOfWhoo", "The History Of Whoo", "后"],
+    "后": ["WHOO", "TheHistoryOfWhoo", "The History Of Whoo", "后", "拱辰享"],
     "雪花秀": ["Sulwhasoo", "雪花", "后雪", "雪花秀"],
 
     # 香水 / 轻奢香氛
@@ -88,12 +89,12 @@ brand_lib = {
 
 # ====================== 品牌匹配函数 ======================
 def match_brand(text):
-    text_lower = str(text).lower()
+    text_lower = str(text).lower()  # 转小写
     matched_brand = "未匹配"
     # 按品牌字典匹配，返回标准品牌名
     for standard_name, alias_list in brand_lib.items():
         for alias in alias_list:
-            alias_lower = alias.lower()
+            alias_lower = alias.lower()  # 别名也转小写
             if alias_lower in text_lower:
                 matched_brand = standard_name
                 return matched_brand, alias  # 找到立即返回，避免重复
@@ -131,22 +132,27 @@ def clean_final_name(original_name, brand_name, spec_text):
     name = str(original_name).strip()
 
     # ==============================================
-    # 核心修复：不管出现多少个品牌（中文+英文）全部删除
+    # 忽略大小写 删除所有品牌别名（解决 GUCCI / gucci 删不掉）
     # ==============================================
     if brand_name != "未匹配":
-        # 循环删除该品牌下的所有别名
         for alias in brand_lib[brand_name]:
-            name = name.replace(alias, "")  # 资生堂、Shiseido 一次性全删
+            # 不区分大小写 替换删除
+            pattern = re.compile(re.escape(alias), re.IGNORECASE)
+            name = pattern.sub("", name)
 
-    # 删除规格
+    # ==============================================
+    # 不区分大小写 删除规格
+    # ==============================================
     if spec_text != "无规格":
         for s in spec_text.split(" | "):
-            name = name.replace(s, "")
+            pattern = re.compile(re.escape(s), re.IGNORECASE)
+            name = pattern.sub("", name)
 
     # 清理多余符号
     name = re.sub(r'[ /\\\-_|()（）【】]', ' ', name)
     name = re.sub(r'\s+', ' ', name).strip()
     return name if name else "纯品牌/纯规格"
+
 # ====================== 主函数：整合输出 ======================
 def process_full_export(file_path):
     # 读取文件
@@ -159,6 +165,7 @@ def process_full_export(file_path):
 
     # 存储结果
     result_data = []
+    unmatched_list = []  # 用来存未匹配品牌
 
     # 控制台排版表头
     print("\n" + "="*140)
@@ -177,6 +184,14 @@ def process_full_export(file_path):
         spec = extract_specs(original)
         # 3 清洗最终品名
         final_name = clean_final_name(original, brand, spec)
+
+        # 记录未匹配
+        if brand == "未匹配":
+            unmatched_list.append({
+                "序号": serial,
+                "货品名称": original,
+                "关键词": keyword
+            })
 
         # 加入结果
         result_data.append({
@@ -197,12 +212,21 @@ def process_full_export(file_path):
 
     # 统计
     total = len(result_data)
-    unmatched = sum(1 for x in result_data if x["匹配品牌"] == "未匹配")
+    unmatched = len(unmatched_list)
     print("="*140)
     print(f"✅ 处理完成 | 总计：{total} 条 | 品牌未匹配：{unmatched} 条")
+
+    # ====================== 打印未匹配品牌清单 ======================
+    if unmatched_list:
+        print("\n" + "="*80)
+        print("📛 以下是【未匹配品牌】的所有条目：")
+        print("="*80)
+        for item in unmatched_list:
+            print(f"序号：{item['序号']} | 货品名称：{item['货品名称']}")
+        print("="*80 + "\n")
+
     print(f"📁 Excel 文件已生成：品牌+规格+最终品名完整版.xlsx\n")
 
 # ====================== 运行 ======================
 if __name__ == "__main__":
-    # 只需要改这里的文件名
     process_full_export("搜索名单.xlsx")
