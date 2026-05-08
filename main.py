@@ -13,6 +13,7 @@ from datetime import datetime
 from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils import get_column_letter
 from product_validator import validate_product   # 导入新版校验
+import traceback
 
 logging.disable(logging.WARNING)
 YOLO().verbose = False
@@ -196,10 +197,13 @@ def get_products_with_tags():
     return list(grouped.values())
 
 def get_priority(tags):
-    if "baiyi" in tags and "brand" in tags: return 4
-    elif "baiyi" in tags: return 3
-    elif "brand" in tags: return 2
-    elif "global" in tags: return 1
+    """单个百亿补贴与百亿补贴+品牌同等最高优先级"""
+    if "baiyi" in tags:          # 包含百亿补贴就是最高
+        return 4
+    if "brand" in tags:
+        return 2
+    if "global" in tags:
+        return 1
     return 0
 
 def is_all_global(item_list):
@@ -210,8 +214,9 @@ def scroll_down_once():
     time.sleep(2.5)
 
 def scroll_to_top():
+    width, height = d.window_size()
     for _ in range(2):
-        d.swipe(500, 500, 500, 1900, 0.3)
+        d.swipe(width // 2, height // 2, width // 2, height // 2 + 400)
         time.sleep(0.8)
 
 def sort_products_by_priority():
@@ -386,29 +391,54 @@ def collect_single_product(search_word, serial_num):
     print(f"校验通过：{match_pass}")
     print("=" * 80)
 
-    return {"title": title, "subsidy": subsidy, "date": date, "found_detail": detail}
+    return {
+        "title": title,
+        "subsidy": subsidy,
+        "date": date,
+        "found_detail": detail,
+        "passed": match_pass          # 新增
+    }
 
 def select_and_collect_best_product(search_word, serial_num):
     sorted_prods = sort_products_by_priority()
     if not sorted_prods:
         print("❌ 未识别商品")
         return None
-    hp = get_priority(sorted_prods[0]["tags"])
-    candidates = [p for p in sorted_prods if get_priority(p["tags"]) == hp]
-    time.sleep(0.5)
-    for i, p in enumerate(candidates):
-        print(f"\n--- 进入商品 {i + 1}/{len(candidates)} ---")
-        d.click(p["cx"], p["cy"])
-        time.sleep(1)
-        res = collect_single_product(search_word, serial_num)
-        if res["found_detail"]:
+
+    # 按优先级分组，从高到低依次尝试
+    priority_order = sorted(set(get_priority(p["tags"]) for p in sorted_prods), reverse=True)
+    any_passed = False
+
+    for prio in priority_order:
+        candidates = [p for p in sorted_prods if get_priority(p["tags"]) == prio]
+        if not candidates:
+            continue
+        print(f"\n===== 优先级 {prio}，共 {len(candidates)} 个商品 =====")
+        time.sleep(0.5)
+
+        # 采集该优先级所有商品
+        for i, p in enumerate(candidates):
+            print(f"--- 进入商品 {i + 1}/{len(candidates)} ---")
+            d.click(p["cx"], p["cy"])
+            time.sleep(1)
+            res = collect_single_product(search_word, serial_num)
+            if res["passed"]:
+                any_passed = True
+            # 返回列表页
+            if res["found_detail"]:
+                d.press("back")
+                time.sleep(1.5)
             d.press("back")
-            time.sleep(1.5)
-            d.press("back")
+            time.sleep(1)
+
+        # 如果当前优先级已有商品通过，不再降级（但仍会采集完当前级所有商品）
+        if any_passed:
+            print(f"✅ 优先级 {prio} 中已有商品通过校验，停止降级")
+            break
         else:
-            d.press("back")
-        time.sleep(1)
-    return True
+            print(f"⚠️ 优先级 {prio} 全部未通过，尝试下一优先级")
+
+    return any_passed
 
 # ====================== 主循环 ======================
 def main():
@@ -431,6 +461,8 @@ def main():
                 ok = True
             except Exception as e:
                 print(f"❌ 异常：{e}")
+                # 获取报错行号
+                traceback.print_exc()
                 go_to_pinduoduo_home()
     print("🎉 全部采集完成！")
 

@@ -134,6 +134,11 @@ def extract_specs(text):
         code = m.group(1)
         if not re.fullmatch(r'\d{4}', code) and code not in cap_nums:
             color_codes.add(code)
+    # 单字母/数字色号（如 L1, N2），长度 2-4，排除容量数字
+    for m in re.finditer(r'(?<![a-z0-9])([A-Za-z]\d+)(?![a-z0-9])', text):
+        code = m.group(1).lower()
+        if code not in cap_nums:
+            color_codes.add(code)
     # 纯数字色号（2~4位），排除容量、包装、年份、有效期
     for m in re.finditer(r'(?<!\d)(\d{2,4})(?!\d)', text):
         code = m.group(1)
@@ -219,6 +224,7 @@ def clean_title(text, brand):
     s = re.sub(r'[a-zA-Z0-9]+#', '', s)  # 1N2#
     s = re.sub(r'\b[A-Za-z]?\d+[A-Za-z]*\s*(色|号)\b', '', s)
     s = re.sub(r'\b[a-z]?\d+[a-z]\d*\b', '', s)  # 独立色号，如 1C1、NC20
+    s = re.sub(r'\b[A-Za-z]\d+\b', '', s)  # 删除 L1、N2 等
     # 5.5 删除独立纯数字（2~4位），不依赖单词边界
     s = re.sub(r'(?<!\d)\d{2,4}(?!\d)', '', s)
 
@@ -383,7 +389,29 @@ def validate_product(search_word, product_title):
         if not name_ok: reasons.append(f'品名相似不足(ratio={ratio:.1%})')
         print('；'.join(reasons))
     print("=" * 60)
-    return final
+    reasons = []
+    if not brand_ok: reasons.append('品牌不一致')
+    if not spec_ok: reasons.append('规格不匹配')
+    if not name_ok: reasons.append(f'品名相似不足(ratio={ratio:.1%})')
+    remark = '；'.join(reasons) if reasons else '通过'
+
+    return {
+        'final': final,
+        's_brand': s_brand,
+        'p_brand': p_brand,
+        'brand_ok': brand_ok,
+        'spec_ok': spec_ok,
+        'name_ok': name_ok,
+        's_cap': s_cap,
+        'p_cap': p_cap,
+        's_color': s_color,
+        'p_color': p_color,
+        's_clean': s_clean,
+        'p_clean': p_clean,
+        'method': method,
+        'ratio': ratio,
+        'remark': remark,
+    }
 
 # ====================== 测试用例 ======================
 if __name__ == '__main__':
@@ -439,4 +467,8 @@ if __name__ == '__main__':
     # 案例4：DW粉底液色号
     validate_product("古驰炼金师花园狮之心香水100ML",
                      "GUCCI/古驰炼金士花园系列香水100ML正品香氛送礼")
+    print()
+    # 案例4：DW粉底液色号
+    validate_product("NARS 超方瓶粉底液#L1",
+                     "【NARS】超方瓶流光美肌粉底液L1 30ml保湿滋润持久遮瑕")
     print()

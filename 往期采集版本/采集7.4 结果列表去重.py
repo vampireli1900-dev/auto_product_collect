@@ -15,13 +15,13 @@ YOLO().verbose = False
 
 # ====================== 初始化 ======================
 d = u2.connect()
-model = YOLO("runs/detect/pdd_logo_train-2/weights/best.pt")
-subsidy_model = YOLO("runs/detect/subsidy_train/weights/best.pt")
-detail_model = YOLO("runs/detect/product_detail_train/weights/best.pt")
+model = YOLO("../runs/detect/pdd_logo_train-2/weights/best.pt")
+subsidy_model = YOLO("../runs/detect/subsidy_train/weights/best.pt")
+detail_model = YOLO("../runs/detect/product_detail_train/weights/best.pt")
 reader = easyocr.Reader(['ch_sim'], gpu=False)
 
 # ====================== 【新增配置项】 ======================
-PRODUCT_LIST_FILE = "搜索名单.xlsx"
+PRODUCT_LIST_FILE = "../搜索名单.xlsx"
 SEARCH_INTERVAL_SECONDS = 40
 PACKAGE_NAME = "com.xunmeng.pinduoduo"  # 拼多多包名
 
@@ -47,7 +47,7 @@ def save_all_to_excel():
         return
 
     df = pd.DataFrame(record_list, columns=EXCEL_HEADER)
-    file = "商品采集汇总.xlsx"
+    file = "../商品采集汇总.xlsx"
 
     if os.path.exists(file):
         old_df = pd.read_excel(file)

@@ -18,13 +18,13 @@ YOLO().verbose = False
 
 # ====================== 初始化 ======================
 d = u2.connect()
-model = YOLO("runs/detect/pdd_logo_train-2/weights/best.pt")
-subsidy_model = YOLO("runs/detect/subsidy_train/weights/best.pt")
-detail_model = YOLO("runs/detect/product_detail_train/weights/best.pt")
+model = YOLO("../runs/detect/pdd_logo_train-2/weights/best.pt")
+subsidy_model = YOLO("../runs/detect/subsidy_train/weights/best.pt")
+detail_model = YOLO("../runs/detect/product_detail_train/weights/best.pt")
 reader = easyocr.Reader(['ch_sim'], gpu=False)
 
 # ====================== 【新增配置项】 ======================
-PRODUCT_LIST_FILE = "搜索名单.xlsx"
+PRODUCT_LIST_FILE = "../搜索名单.xlsx"
 SEARCH_INTERVAL_SECONDS = 40
 PACKAGE_NAME = "com.xunmeng.pinduoduo"
 
@@ -260,7 +260,7 @@ def save_debug_excel():
         print("⚠️ 暂无校验调试数据，跳过保存")
         return
 
-    file_path = "商品校验调试记录.xlsx"
+    file_path = "../商品校验调试记录.xlsx"
     new_df = pd.DataFrame(debug_record_list, columns=DEBUG_EXCEL_HEADER)
 
     # 如果文件已存在，读取旧数据 拼接追加
@@ -328,7 +328,7 @@ def save_all_to_excel():
         return
     # 保存主采集表
     df = pd.DataFrame(record_list, columns=EXCEL_HEADER)
-    file = "商品采集汇总.xlsx"
+    file = "../商品采集汇总.xlsx"
     if os.path.exists(file):
         old_df = pd.read_excel(file)
         df = pd.concat([old_df, df], ignore_index=True)
@@ -599,7 +599,6 @@ def find_and_click_detail(max_scroll=7):
         img = d.screenshot(format="opencv")
         res = detail_model(img, conf=0.75)
         box = None
-
         for r in res:
             for b in r.boxes:
                 if int(b.cls[0]) == 0:
@@ -607,11 +606,9 @@ def find_and_click_detail(max_scroll=7):
                     break
             if box:
                 break
-
         if box:
             x1, y1, x2, y2 = box
             crop_img = img[y1:y2, x1:x2]
-
             ocr_result = reader.readtext(crop_img)
             full_text = ""
             for item in ocr_result:
