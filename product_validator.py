@@ -1,4 +1,5 @@
 import re
+from typing import List, Optional
 
 # ====================== 品牌字典 ======================
 brand_lib = {
@@ -316,7 +317,11 @@ def lcs_substring_length(a, b):
     return max_len
 
 # ====================== 核心校验函数 ======================
-def validate_product(search_word, product_title):
+def validate_product(
+    search_word,
+    product_title,
+    trace_lines: Optional[List[str]] = None,
+):
     # 1. 品牌
     s_brand = match_brand(search_word)
     p_brand = match_brand(product_title)
@@ -370,25 +375,35 @@ def validate_product(search_word, product_title):
         name_ok = (ratio >= 0.51) and (common >= 3)
         method = f'LCS子序列({ratio:.1%})'
     final = brand_ok and spec_ok and name_ok
-    # ----- 调试输出 -----
-    print("=" * 60)
-    print(f"搜索词 ：{search_word}")
-    print(f"商品名 ：{product_title}")
-    print(f"品牌    ：{s_brand} → {p_brand} | {'✅' if brand_ok else '❌'}")
-    print(f"容量规格：{s_cap} → {p_cap} | {'✅' if spec_ok else '❌'}")
-    print(f"色号    ：{s_color} → {p_color}")
-    print(f"清洗后  ：{s_clean} → {p_clean}")
-    print(f"品名匹配：{method} | {'✅' if name_ok else '❌'}")
-    print(f"结果    ：{'✅ PASS' if final else '❌ FAIL'} | 原因：", end='')
+
     if final:
-        print("所有检查通过")
+        reason_tail = "所有检查通过"
     else:
-        reasons = []
-        if not brand_ok: reasons.append('品牌不一致')
-        if not spec_ok: reasons.append('规格不匹配')
-        if not name_ok: reasons.append(f'品名相似不足(ratio={ratio:.1%})')
-        print('；'.join(reasons))
-    print("=" * 60)
+        reasons_dbg = []
+        if not brand_ok:
+            reasons_dbg.append("品牌不一致")
+        if not spec_ok:
+            reasons_dbg.append("规格不匹配")
+        if not name_ok:
+            reasons_dbg.append(f"品名相似不足(ratio={ratio:.1%})")
+        reason_tail = "；".join(reasons_dbg)
+
+    lines_out = [
+        "=" * 60,
+        f"搜索词 ：{search_word}",
+        f"商品名 ：{product_title}",
+        f"品牌    ：{s_brand} → {p_brand} | {'✅' if brand_ok else '❌'}",
+        f"容量规格：{s_cap} → {p_cap} | {'✅' if spec_ok else '❌'}",
+        f"色号    ：{s_color} → {p_color}",
+        f"清洗后  ：{s_clean} → {p_clean}",
+        f"品名匹配：{method} | {'✅' if name_ok else '❌'}",
+        f"结果    ：{'✅ PASS' if final else '❌ FAIL'} | 原因：{reason_tail}",
+        "=" * 60,
+    ]
+    if trace_lines is not None:
+        trace_lines.extend(lines_out)
+    for ln in lines_out:
+        print(ln)
     reasons = []
     if not brand_ok: reasons.append('品牌不一致')
     if not spec_ok: reasons.append('规格不匹配')

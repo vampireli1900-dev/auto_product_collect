@@ -36,6 +36,7 @@ DEBUG_XLSX = os.path.abspath(
 )
 
 SEARCH_INTERVAL_SECONDS = int(os.environ.get("COLLECT_SEARCH_INTERVAL", "40"))
+_TRACE_CAP = int(os.environ.get("COLLECT_TRACE_MAX_LINES", "800"))
 PACKAGE_NAME = "com.xunmeng.pinduoduo"
 
 _runtime_lock = threading.Lock()
@@ -111,6 +112,16 @@ def _emit(
     signal["更新时间"] = time.strftime("%Y-%m-%d %H:%M:%S")
     if extra:
         signal.update(extra)
+
+
+def _trace(signal: Optional[Dict[str, Any]], line: str) -> None:
+    if signal is None:
+        return
+    buf = signal.setdefault("采集轨迹", [])
+    buf.append(line)
+    over = len(buf) - _TRACE_CAP
+    if over > 0:
+        del buf[:over]
 
 
 def _write_debug_to_disk() -> None:
@@ -256,6 +267,12 @@ def search_product(d, keyword: str) -> None:
         pass
 
 
+def _list_screen_jpeg_path(d) -> str:
+    sid = getattr(d, "serial", None) or "device"
+    safe = re.sub(r"[^\w.-]+", "_", str(sid))
+    return os.path.join(_PROJECT_DIR, f"list_screen_{safe}.jpg")
+
+
 def scan_list_products(d, shot_path: str) -> list:
     d.screenshot(shot_path)
     img = cv2.imread(shot_path)
@@ -280,8 +297,7 @@ def scan_list_products(d, shot_path: str) -> list:
 
 
 def get_products_with_tags(d) -> list:
-    shot_path = f"list_screen_{int(time.time() * 1000)}.jpg"
-    prods = scan_list_products(d, shot_path)
+    prods = scan_list_products(d, _list_screen_jpeg_path(d))
     grouped = {}
     for p in prods:
         cx, cy = p["cx"], p["cy"]
@@ -527,6 +543,7 @@ def collect_single_product(
     serial_num: int,
     records_out: Optional[List[List[Any]]] = None,
     debug_out: Optional[List[List[Any]]] = None,
+    signal: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     xml = d.dump_hierarchy()
     info = extract_product_info(xml, search_word)
@@ -537,7 +554,8 @@ def collect_single_product(
     detail = find_and_click_detail(d)
     date = get_date_with_retry(d) if detail else ""
 
-    res = validate_product(search_word, title)
+    trace_bucket = signal.setdefault("采集轨迹", []) if signal else None
+    res = validate_product(search_word, title, trace_lines=trace_bucket)
     match_pass = bool(res["final"])
 
     rec_row = [serial_num, title, search_word, ori, cur, subsidy, date]
@@ -562,13 +580,19 @@ def collect_single_product(
     ]
     _append_pairs(rec_row, dbg_row, records_out, debug_out)
 
-    print("\n" + "=" * 80)
-    print(f"货品名称：{title}")
-    print(f"关键词：{search_word}")
-    print(f"原价：{ori} | 现价：{cur}")
-    print(f"百亿补贴：{subsidy} | 日期：{date}")
-    print(f"校验通过：{match_pass}")
-    print("=" * 80)
+    summary_lines = [
+        "",
+        "=" * 80,
+        f"货品名称：{title}",
+        f"关键词：{search_word}",
+        f"原价：{ori} | 现价：{cur}",
+        f"百亿补贴：{subsidy} | 日期：{date}",
+        f"校验通过：{'✅' if match_pass else '❌'} {match_pass}",
+        "=" * 80,
+    ]
+    for ln in summary_lines:
+        print(ln)
+        _trace(signal, ln)
 
     return {
         "title": title,
@@ -586,6 +610,7 @@ def select_and_collect_best_product(
     serial_num: int,
     records_out: Optional[List[List[Any]]] = None,
     debug_out: Optional[List[List[Any]]] = None,
+    signal: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     try:
         scroll_to_top(d)
@@ -595,6 +620,7 @@ def select_and_collect_best_product(
     sorted_prods = sort_products_by_priority(d)
     if not sorted_prods:
         print("未识别商品")
+        _trace(signal, "未识别商品")
         return None
 
     priority_order = sorted(
@@ -611,14 +637,25 @@ def select_and_collect_best_product(
         if prio == 1 and len(candidates) > 2:
             candidates = candidates[:2]
 
-        print(f"\n===== 优先级 {prio}，共 {len(candidates)} 个商品 =====")
+        prio_hdr = f"\n===== 优先级 {prio}，共 {len(candidates)} 个商品 ====="
+        print(prio_hdr)
+        _trace(signal, prio_hdr.strip())
         time.sleep(0.5)
 
         for i, p in enumerate(candidates):
-            print(f"--- 进入商品 {i + 1}/{len(candidates)} ---")
+            enter_ln = f"--- 进入商品 {i + 1}/{len(candidates)} ---"
+            print(enter_ln)
+            _trace(signal, enter_ln)
             d.click(p["cx"], p["cy"])
             time.sleep(1)
-            res = collect_single_product(d, search_word, serial_num, records_out, debug_out)
+            res = collect_single_product(
+                d,
+                search_word,
+                serial_num,
+                records_out,
+                debug_out,
+                signal=signal,
+            )
             last_result = res
             if res["passed"]:
                 any_passed = True
@@ -629,9 +666,13 @@ def select_and_collect_best_product(
             time.sleep(1)
 
         if any_passed:
-            print(f"优先级 {prio} 中已有商品通过校验，停止降级")
+            stop_ln = f"优先级 {prio} 中已有商品通过校验，停止降级"
+            print(stop_ln)
+            _trace(signal, stop_ln)
             break
-        print(f"优先级 {prio} 全部未通过，尝试下一优先级")
+        next_ln = f"优先级 {prio} 全部未通过，尝试下一优先级"
+        print(next_ln)
+        _trace(signal, next_ln)
 
     if last_result is None:
         return None
@@ -650,6 +691,9 @@ def collect_one_task(
     task_records: List[List[Any]] = []
     task_debug: List[List[Any]] = []
 
+    if signal is not None:
+        signal["采集轨迹"] = []
+
     ctx = DeviceContext(device_id)
     d = ctx.d
 
@@ -663,6 +707,7 @@ def collect_one_task(
         index_num,
         records_out=task_records,
         debug_out=task_debug,
+        signal=signal,
     )
 
     _emit(signal, phase="写入汇总", detail="Excel")

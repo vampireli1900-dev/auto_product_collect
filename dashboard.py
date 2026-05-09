@@ -19,6 +19,9 @@ DEFAULT_TASK_PATH = os.path.join(BASE_DIR, "搜索名单.xlsx")
 LOG_FILE = os.path.join(BASE_DIR, "collector_logs.txt")
 COLLECT_SUMMARY_PATH = os.path.join(BASE_DIR, "商品采集汇总.xlsx")
 
+TRACE_MIRROR_HEIGHT = int(os.environ.get("COLLECT_TRACE_MIRROR_HEIGHT", "520"))
+TRACE_PREVIEW_HEIGHT = int(os.environ.get("COLLECT_TRACE_PREVIEW_HEIGHT", "320"))
+
 from task_manager import ExcelTaskManager
 from main import collect_one_task, go_to_pinduoduo_home
 
@@ -359,11 +362,81 @@ def get_recent_logs() -> str:
         return "暂无日志。"
 
 
+def dedupe_consecutive_lines(text: str) -> str:
+    lines = text.rstrip("\n").split("\n")
+    out: List[str] = []
+    prev = None
+    for ln in lines:
+        if ln == prev:
+            continue
+        out.append(ln)
+        prev = ln
+    return "\n".join(out)
+
+
+def dedupe_trace_lines(lines: List[str]) -> List[str]:
+    out: List[str] = []
+    prev = None
+    for ln in lines:
+        if ln == prev:
+            continue
+        out.append(ln)
+        prev = ln
+    return out
+
+
+def dedupe_fail_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    keys = ("序号", "失败原因", "备注")
+    seen = set()
+    out_rev: List[Dict[str, Any]] = []
+    for r in reversed(rows):
+        key = tuple(str(r.get(k) or "").strip() for k in keys)
+        if key in seen:
+            continue
+        seen.add(key)
+        out_rev.append(r)
+    return list(reversed(out_rev))
+
+
+def slim_devices_for_table(devs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [{k: v for k, v in d.items() if k != "_遥测"} for d in devs]
+
+
+def format_trace_for_ui(lines: List[str], tail: int = 600) -> str:
+    core = dedupe_trace_lines(lines)
+    if tail > 0 and len(core) > tail:
+        core = core[-tail:]
+    return "\n".join(core)
+
+
+def get_recent_logs_display() -> str:
+    return dedupe_consecutive_lines(get_recent_logs())
+
+
+def render_trace_mirror(text: str, height_px: int, ui_key: str) -> None:
+    st.text_area(
+        "采集镜像",
+        value=text,
+        height=height_px,
+        disabled=True,
+        label_visibility="collapsed",
+        key=ui_key,
+    )
+
+
 with st.sidebar:
     st.markdown("### 多机群控采集")
     st.caption(BASE_DIR)
     st.divider()
-    menus = ["总览", "任务管理", "设备与调度", "采集参数", "进度与异常", "运行日志"]
+    menus = [
+        "总览",
+        "采集实况",
+        "任务管理",
+        "设备与调度",
+        "采集参数",
+        "进度与异常",
+        "运行日志",
+    ]
     for m in menus:
         if st.button(m, use_container_width=True, key=f"menu_{m}"):
             st.session_state.current_menu = m
@@ -402,7 +475,7 @@ if menu == "总览":
 
     st.subheader("设备一览")
     if devs:
-        st.dataframe(devs, use_container_width=True, height=220)
+        st.dataframe(slim_devices_for_table(devs), use_container_width=True, height=220)
     else:
         st.caption("尚未扫描设备。请到「设备与调度」扫描。")
 
@@ -413,6 +486,65 @@ if menu == "总览":
             st.dataframe(tail_rows, use_container_width=True, height=360)
         else:
             st.caption("暂无采集记录。")
+
+    st.subheader("采集实况预览")
+    preview_devs = st.session_state.device_list
+    if preview_devs:
+        st.caption("完整控制台镜像请看侧边栏「采集实况」。")
+        for pdv in preview_devs:
+            pid = pdv.get("设备ID") or ""
+            plines = (pdv.get("_遥测") or {}).get("采集轨迹") or []
+            with st.expander(f"{pid} · 最近输出", expanded=False):
+                render_trace_mirror(
+                    format_trace_for_ui(plines, tail=400)
+                    if plines
+                    else "（尚无输出，请先在「设备与调度」扫描并开始采集。）",
+                    TRACE_PREVIEW_HEIGHT,
+                    ui_key=f"mirror_preview_{pid}",
+                )
+    else:
+        st.caption("尚无设备，请先在「设备与调度」扫描设备。")
+
+elif menu == "采集实况":
+    st.title("采集实况（控制台镜像）")
+    st.caption(
+        "与终端打印一致的优先级流程、商品校验块与汇总分隔线；采集线程写入后即可在此看到。"
+        f" 下方窗口高度固定为 {TRACE_MIRROR_HEIGHT}px，内容在框内滚动。"
+        " 可用环境变量 COLLECT_TRACE_MIRROR_HEIGHT 调整主窗口像素高度，"
+        f"COLLECT_TRACE_PREVIEW_HEIGHT 调整总览预览（默认 {TRACE_PREVIEW_HEIGHT}px）。"
+    )
+    auto_refresh = st.toggle("自动刷新", value=True)
+
+    devs = st.session_state.device_list
+    if not devs:
+        st.warning("请先到「设备与调度」扫描设备。")
+    else:
+        paired = [(d, str(d.get("设备ID") or "")) for d in devs if d.get("设备ID")]
+        ids = [p[1] for p in paired]
+        tabs = st.tabs(ids)
+        for ti, (dev, did) in enumerate(paired):
+            ensure_device_fields(dev)
+            trace_lines = (dev.get("_遥测") or {}).get("采集轨迹") or []
+            tel = dev.get("_遥测") or {}
+            head = (
+                f"阶段：{tel.get('阶段', '-')}"
+                f" · {tel.get('阶段说明', '')}"
+                f" · 更新 {tel.get('更新时间', '-')}\n"
+                f"当前任务：{dev.get('当前任务') or '-'}\n"
+                + ("-" * 72)
+                + "\n"
+            )
+            body = format_trace_for_ui(trace_lines, tail=2500)
+            with tabs[ti]:
+                render_trace_mirror(
+                    head + body if body.strip() else head + "（当前暂无轨迹文本，等待任务执行。）",
+                    TRACE_MIRROR_HEIGHT,
+                    ui_key=f"mirror_live_{did}",
+                )
+
+    if auto_refresh:
+        time.sleep(0.8)
+        st.rerun()
 
 elif menu == "任务管理":
     st.title("任务列表")
@@ -508,7 +640,20 @@ elif menu == "设备与调度":
             if dev.get("异常信息"):
                 st.write(f"最近异常（多为单次任务）：{dev.get('异常信息')}")
 
-    st.dataframe(st.session_state.device_list, use_container_width=True)
+        trace_lines = (dev.get("_遥测") or {}).get("采集轨迹") or []
+        with st.expander(f"实时采集轨迹 · {device_id}", expanded=True):
+            render_trace_mirror(
+                format_trace_for_ui(trace_lines, tail=1500)
+                if trace_lines
+                else "（暂无轨迹，开始任务后将在此刷新；也可打开侧边栏「采集实况」。）",
+                TRACE_MIRROR_HEIGHT,
+                ui_key=f"mirror_sched_{device_id}_{i}",
+            )
+
+    st.dataframe(
+        slim_devices_for_table(st.session_state.device_list),
+        use_container_width=True,
+    )
     if auto_refresh:
         time.sleep(1.0)
         st.rerun()
@@ -578,10 +723,16 @@ elif menu == "进度与异常":
     for r in rows:
         if str(r.get("状态")) == "未采集" and str(r.get("失败原因") or "").strip():
             fail_rows.append(r)
-    tail = fail_rows[-50:] if fail_rows else []
+    tail = dedupe_fail_rows(fail_rows)[-50:] if fail_rows else []
 
     st.subheader("单设备进度")
-    st.dataframe(st.session_state.device_list, use_container_width=True)
+    st.dataframe(
+        slim_devices_for_table(st.session_state.device_list),
+        use_container_width=True,
+    )
+    st.caption(
+        "流水线级实时输出请在「采集实况」查看；「设备与调度」内也可展开单设备轨迹。"
+    )
 
     st.subheader("最近失败条目（Excel 中带失败原因的未采集）")
     if tail:
@@ -603,6 +754,6 @@ elif menu == "进度与异常":
 
 elif menu == "运行日志":
     st.title("运行日志")
-    st.code(get_recent_logs())
+    st.code(get_recent_logs_display())
     time.sleep(1.0)
     st.rerun()
