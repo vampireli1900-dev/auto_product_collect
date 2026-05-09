@@ -55,6 +55,8 @@ EXCEL_HEADER = [
     "现价",
     "是否百亿补贴产品",
     "生产日期",
+    "校验通过",
+    "未通过原因",
 ]
 
 DEBUG_EXCEL_HEADER = [
@@ -182,7 +184,55 @@ def _write_summary_to_disk() -> None:
         old_df = pd.read_excel(file)
         df = pd.concat([old_df, df], ignore_index=True)
     df = df.drop_duplicates(subset=["序号", "货品名称", "现价"], keep="last")
-    df.to_excel(file, index=False)
+    with pd.ExcelWriter(file, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="汇总")
+        ws = writer.sheets["汇总"]
+
+        ws.freeze_panes = "A2"
+        try:
+            ws.auto_filter.ref = ws.dimensions
+        except Exception:
+            pass
+
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill("solid", fgColor="4472C4")
+        center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        for col in range(1, ws.max_column + 1):
+            cell = ws.cell(row=1, column=col)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = center_align
+
+        data_align = Alignment(vertical="center", wrap_text=True)
+        for row in range(2, ws.max_row + 1):
+            for col in range(1, ws.max_column + 1):
+                cell = ws.cell(row=row, column=col)
+                cell.alignment = data_align
+
+        # 原价/现价列做数字展示（不强转，避免 None/空串报错）
+        try:
+            price_cols = [EXCEL_HEADER.index("原价") + 1, EXCEL_HEADER.index("现价") + 1]
+            for row in range(2, ws.max_row + 1):
+                for c in price_cols:
+                    cell = ws.cell(row=row, column=c)
+                    if isinstance(cell.value, (int, float)) and cell.value is not None:
+                        cell.number_format = "0.00"
+        except Exception:
+            pass
+
+        for col in range(1, ws.max_column + 1):
+            col_letter = get_column_letter(col)
+            max_length = 0
+            for row in range(1, ws.max_row + 1):
+                cell = ws.cell(row=row, column=col)
+                if cell.value is None:
+                    continue
+                current_length = len(str(cell.value))
+                if current_length > max_length:
+                    max_length = current_length
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[col_letter].width = adjusted_width
+
     print(f"采集记录已保存，总行数：{len(df)}")
 
 
@@ -557,8 +607,19 @@ def collect_single_product(
     trace_bucket = signal.setdefault("采集轨迹", []) if signal else None
     res = validate_product(search_word, title, trace_lines=trace_bucket)
     match_pass = bool(res["final"])
+    fail_reason = "" if match_pass else str(res.get("remark") or "校验未通过")
 
-    rec_row = [serial_num, title, search_word, ori, cur, subsidy, date]
+    rec_row = [
+        serial_num,
+        title,
+        search_word,
+        ori,
+        cur,
+        subsidy,
+        date,
+        "✅" if match_pass else "❌",
+        fail_reason,
+    ]
     if debug_out is not None:
         dbg_n = len(debug_out) + 1
     elif records_out is None:

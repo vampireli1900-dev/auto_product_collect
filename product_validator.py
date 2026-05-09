@@ -372,7 +372,7 @@ def validate_product(
             ratio = common / len(s_clean)
         else:
             ratio = 1.0
-        name_ok = (ratio >= 0.51) and (common >= 3)
+        name_ok = (ratio >= 0.50) and (common >= 3)
         method = f'LCS子序列({ratio:.1%})'
     final = brand_ok and spec_ok and name_ok
 
