@@ -36,7 +36,7 @@ debug_record_list = []
 
 EXCEL_HEADER = [
     "序号", "货品名称", "关键词", "原价", "现价",
-    "是否百亿补贴产品", "生产日期"
+    "是否百亿补贴产品", "生产日期", "校验通过", "未通过原因"
 ]
 
 DEBUG_EXCEL_HEADER = [
@@ -101,7 +101,34 @@ def save_all_to_excel():
             old_df = pd.read_excel(file)
             df = pd.concat([old_df, df], ignore_index=True)
         df = df.drop_duplicates(subset=["序号", "货品名称", "现价"], keep="last")
-        df.to_excel(file, index=False)
+
+        # 带样式写入
+        with pd.ExcelWriter(file, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name="汇总")
+            ws = writer.sheets["汇总"]
+
+            # 表头样式
+            header_font = Font(bold=True, color="FFFFFF")
+            header_fill = PatternFill("solid", fgColor="4472C4")
+            center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            for col in range(1, ws.max_column + 1):
+                cell = ws.cell(row=1, column=col)
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = center_align
+
+            # 内容居中
+            data_align = Alignment(vertical="center", wrap_text=True)
+            for row in range(2, ws.max_row + 1):
+                for col in range(1, ws.max_column + 1):
+                    ws.cell(row=row, column=col).alignment = data_align
+
+            # 自动列宽
+            for col in range(1, ws.max_column + 1):
+                col_letter = get_column_letter(col)
+                max_len = max((len(str(ws.cell(row=r, column=col).value or "")) for r in range(1, ws.max_row + 1)), default=10)
+                ws.column_dimensions[col_letter].width = min(max_len + 2, 50)
+
         print(f"📁 采集记录已保存，总行数：{len(df)}")
     save_debug_excel()
 
@@ -216,7 +243,7 @@ def scroll_down_once():
 def scroll_to_top():
     width, height = d.window_size()
     for _ in range(2):
-        d.swipe(width // 2, height // 2, width // 2, height // 2 + 400)
+        d.swipe(width // 2, height // 2, width // 2, height // 2 + 1000)
         time.sleep(0.8)
 
 def sort_products_by_priority():
@@ -238,15 +265,21 @@ def sort_products_by_priority():
 def is_subsidy_product():
     return "百亿补贴" in d.dump_hierarchy() or "官方补贴" in d.dump_hierarchy()
 
-def extract_product_info(xml_content, search_word):
+def extract_product_info(xml_content: str, search_word: str):
     def get_ngram_pairs(text, n=2):
-        text = re.sub(r'[^a-z0-9\u4e00-\u9fff]', '', text.lower())
-        return [text[i:i + n] for i in range(len(text) - n + 1)] if len(text) >= n else [text]
+        text = re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", text.lower())
+        return (
+            [text[i : i + n] for i in range(len(text) - n + 1)]
+            if len(text) >= n
+            else [text]
+        )
+
     def get_single_chars(text):
-        text = re.sub(r'[^a-z0-9\u4e00-\u9fff]', '', text.lower())
+        text = re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", text.lower())
         return [c for c in text]
+
     def count_chinese(text):
-        return len(re.findall(r'[\u4e00-\u9fff]', text))
+        return len(re.findall(r"[\u4e00-\u9fff]", text))
 
     search_cn_count = count_chinese(search_word)
     desc_list = re.findall(r'content-desc="([^"]+)"', xml_content)
@@ -257,14 +290,14 @@ def extract_product_info(xml_content, search_word):
         "通知", "高德", "淘宝", "浏览器", "手机管家", "振铃器", "静音",
         "返回", "分享", "店铺", "收藏", "客服", "工具栏", "顶部", "拼小圈",
         "¥", "￥", "大促价", "已抢", "假一赔十", "100%正品", "拼单价",
-        "狂降", "直接成团", "买过", "次", "图片", "该店", "tronplayer_view", "查看全部"
+        "狂降", "直接成团", "买过", "次", "图片", "该店", "tronplayer_view", "查看全部",
     ]
     search_pairs = get_ngram_pairs(search_word)
     for desc in desc_list:
         desc = desc.strip()
         if any(kw in desc for kw in blacklist):
             continue
-        desc_clean = re.sub(r'[^a-z0-9\u4e00-\u9fff]', '', desc.lower())
+        desc_clean = re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", desc.lower())
         match_count = sum(1 for p in search_pairs if p in desc_clean)
         if match_count > best_count and match_count > 0:
             best_count = match_count
@@ -281,7 +314,7 @@ def extract_product_info(xml_content, search_word):
                 continue
             if count_chinese(desc) < search_cn_count:
                 continue
-            desc_clean = re.sub(r'[^a-z0-9\u4e00-\u9fff]', '', desc.lower())
+            desc_clean = re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", desc.lower())
             match_count = sum(1 for c in search_chars if c in desc_clean)
             if match_count > best_count and match_count > 0:
                 best_count = match_count
@@ -289,34 +322,90 @@ def extract_product_info(xml_content, search_word):
             elif match_count == best_count and match_count > 0:
                 if len(desc) > len(best_title):
                     best_title = desc
-    price_pattern = r'[¥￥]\s*(\d+(?:\.\d+)?)'
-    all_prices = re.findall(price_pattern, xml_content)
-    price_nums = [float(p) for p in all_prices]
+
+    # ====================== 以下是【全新重写】的价格提取逻辑 ======================
+    # 1. 找到所有带 ¥ 的 content-desc 文本
+    price_desc_list = []
+    for desc in re.findall(r'content-desc="([^"]+)"', xml_content):
+        if "¥" in desc:
+            price_desc_list.append(desc)
+
+    # 2. 清洗：新增2条规则 + 原有规则
+    cleaned_texts = []
+    for text in price_desc_list:
+        if "单独购买" in text:
+            continue
+        # ====================== 清洗规则（截断版） ======================
+        cleaned_texts = []
+        for text in price_desc_list:
+            # 规则0：包含单独购买 → 跳过
+            if "单独购买" in text:
+                continue
+            # 找到所有规则的最早出现位置
+            split_at = len(text)
+            # 规则1：时间 xx:xx → 截断
+            match1 = re.search(r"\d{1,2}:\d{2}", text)
+            if match1:
+                split_at = min(split_at, match1.start())
+            # 规则2：X人团 → 截断
+            match2 = re.search(r"\d人团", text)
+            if match2:
+                split_at = min(split_at, match2.start())
+            # 规则3：数字+元 / 件 / 万 → 截断
+            match3 = re.search(r"\d+\.?\d*(元|件|万\+?|万)", text)
+            if match3:
+                split_at = min(split_at, match3.start())
+            # 规则4：降 + 数字 → 截断
+            match4 = re.search(r"降\d+\.?\d*", text)
+            if match4:
+                split_at = min(split_at, match4.start())
+            # 从最早匹配的位置截断，后面全部丢掉
+            text = text[:split_at].strip()
+            cleaned_texts.append(text)
+
+    # 3. 统一提取所有价格
+    all_prices = []
+    for t in cleaned_texts:
+        prices = re.findall(r"[¥￥]\s*(\d+\.?\d*)", t)
+        all_prices.extend(prices)
+
+    # 4. 过滤规则：去掉 0开头 / 个位数（1-9）
+    valid_prices = []
+    for p in all_prices:
+        p_str = str(p).strip()
+        # 跳过空
+        if not p_str:
+            continue
+        # 跳过 0 开头
+        if p_str.startswith("0") and len(p_str) > 1:
+            continue
+        # 转数字
+        try:
+            num = float(p_str)
+        except:
+            continue
+        # 跳过个位数
+        if num < 10:
+            continue
+        valid_prices.append(round(num, 2))
+
+    # 去重 + 排序
+    valid_prices = sorted(list(set(valid_prices)))
+
     original_price = None
     current_price = None
-    if price_nums:
-        prices = sorted(list(set(price_nums)))
-        valid = []
-        for i in prices:
-            keep = True
-            for j in prices:
-                if i == j: continue
-                if max(i, j) >= min(i, j) * 10:
-                    s_i = str(int(round(i)))
-                    s_j = str(int(round(j)))
-                    if len(s_i) >= 3 and len(s_j) >= 3 and s_i[:3] == s_j[:3]:
-                        if i > j:
-                            keep = False
-                        break
-            if keep: valid.append(i)
-        if valid:
-            current_price = str(min(valid))
-            original_price = str(max(valid))
+    if len(valid_prices) >= 2:
+        original_price = str(max(valid_prices))
+        current_price = str(min(valid_prices))
+    elif len(valid_prices) == 1:
+        current_price = str(valid_prices[0])  # 只有一个 → 算现价
+
     return {
         "title": best_title.strip() if best_title else "",
         "original_price": original_price,
-        "current_price": current_price
+        "current_price": current_price,
     }
+
 
 def find_and_click_detail(max_scroll=7):
     for _ in range(max_scroll):
@@ -353,22 +442,28 @@ def get_date_with_retry():
     return m.group(1) if m else ""
 
 def collect_single_product(search_word, serial_num):
+    subsidy = "是" if is_subsidy_product() else "否"
+    detail = find_and_click_detail()
+    date = get_date_with_retry() if detail else ""
     xml = d.dump_hierarchy()
     info = extract_product_info(xml, search_word)
     title = info["title"]
     ori = info["original_price"]
     cur = info["current_price"]
-    subsidy = "是" if is_subsidy_product() else "否"
-    detail = find_and_click_detail()
-    date = get_date_with_retry() if detail else ""
 
     # 调用校验
     res = validate_product(search_word, title)
     match_pass = res['final']
+    fail_reason = "" if match_pass else res.get("remark", "校验未通过")
 
-    record_list.append([serial_num, title, search_word, ori, cur, subsidy, date])
+    # ====================== 这里修改了 ======================
+    record_list.append([
+        serial_num, title, search_word, ori, cur, subsidy, date,
+        "✅" if match_pass else "❌",
+        fail_reason
+    ])
 
-    # 追加调试记录
+    # 调试记录
     debug_record_list.append([
         len(debug_record_list) + 1,
         search_word,
@@ -388,7 +483,7 @@ def collect_single_product(search_word, serial_num):
     print(f"关键词：{search_word}")
     print(f"原价：{ori} | 现价：{cur}")
     print(f"百亿补贴：{subsidy} | 日期：{date}")
-    print(f"校验通过：{match_pass}")
+    print(f"校验通过：{'✅' if match_pass else '❌'} {match_pass}")
     print("=" * 80)
 
     return {
@@ -396,7 +491,7 @@ def collect_single_product(search_word, serial_num):
         "subsidy": subsidy,
         "date": date,
         "found_detail": detail,
-        "passed": match_pass          # 新增
+        "passed": match_pass
     }
 
 def select_and_collect_best_product(search_word, serial_num):

@@ -291,8 +291,8 @@ def go_to_pinduoduo_home(device_id: str) -> None:
         time.sleep(8)
 
 
-def search_product(d, keyword: str) -> None:
-    print(f"\n搜索：{keyword}")
+def search_product(d, keyword: str, index_num) -> None:
+    print(f"\n搜索：{keyword}  序号：{index_num}")
     width, height = d.window_size()
     search_y = int(height * 200 / 2400)
     d.swipe(width // 2, height // 2, width // 2, height // 2 + 400)
@@ -385,7 +385,7 @@ def scroll_down_once(d) -> None:
 def scroll_to_top(d) -> None:
     width, height = d.window_size()
     for _ in range(2):
-        d.swipe(width // 2, height // 2, width // 2, height // 2 + 400)
+        d.swipe(width // 2, height // 2, width // 2, height // 2 + 1200)
         time.sleep(0.8)
 
 
@@ -431,44 +431,11 @@ def extract_product_info(xml_content: str, search_word: str) -> Dict[str, Option
     best_title = ""
     best_count = 0
     blacklist = [
-        "电池",
-        "状态栏",
-        "电量",
-        "百分之",
-        "WLAN",
-        "手机信号",
-        "5G",
-        "4G",
-        "通知",
-        "高德",
-        "淘宝",
-        "浏览器",
-        "手机管家",
-        "振铃器",
-        "静音",
-        "返回",
-        "分享",
-        "店铺",
-        "收藏",
-        "客服",
-        "工具栏",
-        "顶部",
-        "拼小圈",
-        "¥",
-        "￥",
-        "大促价",
-        "已抢",
-        "假一赔十",
-        "100%正品",
-        "拼单价",
-        "狂降",
-        "直接成团",
-        "买过",
-        "次",
-        "图片",
-        "该店",
-        "tronplayer_view",
-        "查看全部",
+        "电池", "状态栏", "电量", "百分之", "WLAN", "手机信号", "5G", "4G",
+        "通知", "高德", "淘宝", "浏览器", "手机管家", "振铃器", "静音",
+        "返回", "分享", "店铺", "收藏", "客服", "工具栏", "顶部", "拼小圈",
+        "¥", "￥", "大促价", "已抢", "假一赔十", "100%正品", "拼单价",
+        "狂降", "直接成团", "买过", "次", "图片", "该店", "tronplayer_view", "查看全部",
     ]
     search_pairs = get_ngram_pairs(search_word)
     for desc in desc_list:
@@ -500,31 +467,84 @@ def extract_product_info(xml_content: str, search_word: str) -> Dict[str, Option
             elif match_count == best_count and match_count > 0:
                 if len(desc) > len(best_title):
                     best_title = desc
-    price_pattern = r"[¥￥]\s*(\d+(?:\.\d+)?)"
-    all_prices = re.findall(price_pattern, xml_content)
-    price_nums = [float(p) for p in all_prices]
+
+    # ====================== 以下是【全新重写】的价格提取逻辑 ======================
+    # 1. 找到所有带 ¥ 的 content-desc 文本
+    price_desc_list = []
+    for desc in re.findall(r'content-desc="([^"]+)"', xml_content):
+        if "¥" in desc:
+            price_desc_list.append(desc)
+
+    # 2. 清洗：新增2条规则 + 原有规则
+    cleaned_texts = []
+    for text in price_desc_list:
+        if "单独购买" in text:
+            continue
+        # ====================== 清洗规则（截断版） ======================
+        cleaned_texts = []
+        for text in price_desc_list:
+            # 规则0：包含单独购买 → 跳过
+            if "单独购买" in text:
+                continue
+            # 找到所有规则的最早出现位置
+            split_at = len(text)
+            # 规则1：时间 xx:xx → 截断
+            match1 = re.search(r"\d{1,2}:\d{2}", text)
+            if match1:
+                split_at = min(split_at, match1.start())
+            # 规则2：X人团 → 截断
+            match2 = re.search(r"\d人团", text)
+            if match2:
+                split_at = min(split_at, match2.start())
+            # 规则3：数字+元 / 件 / 万 → 截断
+            match3 = re.search(r"\d+\.?\d*(元|件|万\+?|万)", text)
+            if match3:
+                split_at = min(split_at, match3.start())
+            # 规则4：降 + 数字 → 截断
+            match4 = re.search(r"降\d+\.?\d*", text)
+            if match4:
+                split_at = min(split_at, match4.start())
+            # 从最早匹配的位置截断，后面全部丢掉
+            text = text[:split_at].strip()
+            cleaned_texts.append(text)
+
+    # 3. 统一提取所有价格
+    all_prices = []
+    for t in cleaned_texts:
+        prices = re.findall(r"[¥￥]\s*(\d+\.?\d*)", t)
+        all_prices.extend(prices)
+    print(all_prices)
+    # 4. 过滤规则：去掉 0开头 / 个位数（1-9）
+    valid_prices = []
+    for p in all_prices:
+        p_str = str(p).strip()
+        # 跳过空
+        if not p_str:
+            continue
+        # 跳过 0 开头
+        if p_str.startswith("0") and len(p_str) > 1:
+            continue
+        # 转数字
+        try:
+            num = float(p_str)
+        except:
+            continue
+        # 跳过个位数
+        if num < 10:
+            continue
+        valid_prices.append(round(num, 2))
+
+    # 去重 + 排序
+    valid_prices = sorted(list(set(valid_prices)))
+
     original_price = None
     current_price = None
-    if price_nums:
-        prices = sorted(list(set(price_nums)))
-        valid = []
-        for i in prices:
-            keep = True
-            for j in prices:
-                if i == j:
-                    continue
-                if max(i, j) >= min(i, j) * 10:
-                    s_i = str(int(round(i)))
-                    s_j = str(int(round(j)))
-                    if len(s_i) >= 3 and len(s_j) >= 3 and s_i[:3] == s_j[:3]:
-                        if i > j:
-                            keep = False
-                        break
-            if keep:
-                valid.append(i)
-        if valid:
-            current_price = str(min(valid))
-            original_price = str(max(valid))
+    if len(valid_prices) >= 2:
+        original_price = str(max(valid_prices))
+        current_price = str(min(valid_prices))
+    elif len(valid_prices) == 1:
+        current_price = str(valid_prices[0])  # 只有一个 → 算现价
+
     return {
         "title": best_title.strip() if best_title else "",
         "original_price": original_price,
@@ -640,7 +660,6 @@ def collect_single_product(
         res["remark"],
     ]
     _append_pairs(rec_row, dbg_row, records_out, debug_out)
-
     summary_lines = [
         "",
         "=" * 80,
@@ -759,7 +778,7 @@ def collect_one_task(
     d = ctx.d
 
     _emit(signal, phase="搜索", detail=keyword)
-    search_product(d, keyword)
+    search_product(d, keyword, index_num)
 
     _emit(signal, phase="列表识别", detail="YOLO / 优先级排序")
     res = select_and_collect_best_product(

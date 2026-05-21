@@ -5,7 +5,7 @@ from typing import List, Optional
 brand_lib = {
     "赫莲娜": ["HR", "HelenaRubinstein", "Helena Rubinstein", "赫莲娜"],
     "海蓝之谜": ["LM", "LaMer", "La Mer", "腊梅", "海蓝之谜"],
-    "莱珀妮": ["LP", "LaPrairie", "La Prairie", "莱珀妮"],
+    "莱珀妮": [ "LaPrairie", "Prairie", "莱珀妮"],
     "希思黎": ["Sisley", "希思黎"],
     "法尔曼": ["Valmont", "法尔曼"],
     "兰蔻": ["Lancome", "Lancôme", "兰蔻"],
@@ -71,7 +71,9 @@ brand_lib = {
     "未来驱蚊": ["VAPE", "未來", "未来驅蚊"],
     "澳洲NatureBOBO": ["NatureBOBO", "Nature BOBO", "澳洲"],
     "旧街场": ["OldTown", "Old Town", "旧街场"],
-    "费列罗": ["Ferrero", "费列", "费列罗"]
+    "费列罗": ["Ferrero", "费列", "费列罗"],
+    "伊丽莎白雅顿": ["ElizabethArden", "Elizabeth Arden", "伊丽莎白雅顿"],
+    "迪奥": ["Dior", "迪奥"],
 }
 
 # ====================== 工具函数 ======================
