@@ -179,7 +179,7 @@ def search_product(keyword):
     print(f"\n🔍 搜索：{keyword}")
     width, height = d.window_size()
     search_y = int(height * 200 / 2400)
-    d.swipe(width // 2, height // 2, width // 2, height // 2 + 400)
+    d.drag(width // 2, height // 2, width // 2, height // 2 + 400)
     time.sleep(1)
     d.click(width // 2, search_y)
     time.sleep(0.8)
@@ -237,13 +237,13 @@ def is_all_global(item_list):
     return all(not ("baiyi" in i["tags"] or "brand" in i["tags"]) for i in item_list)
 
 def scroll_down_once():
-    d.swipe(500, 1800, 500, 600, 0.3)
+    d.drag(500, 1800, 500, 600, 0.3)
     time.sleep(2.5)
 
 def scroll_to_top():
     width, height = d.window_size()
     for _ in range(2):
-        d.swipe(width // 2, height // 2, width // 2, height // 2 + 1000)
+        d.drag(width // 2, height // 2, width // 2, height // 2 + 1200)
         time.sleep(0.8)
 
 def sort_products_by_priority():
@@ -286,7 +286,7 @@ def extract_product_info(xml_content: str, search_word: str):
     best_title = ""
     best_count = 0
     blacklist = [
-        "电池", "状态栏", "电量", "百分之", "WLAN", "手机信号", "5G", "4G",
+        "电池", "状态栏", "电量", "百分之", "WLAN", "信号",
         "通知", "高德", "淘宝", "浏览器", "手机管家", "振铃器", "静音",
         "返回", "分享", "店铺", "收藏", "客服", "工具栏", "顶部", "拼小圈",
         "¥", "￥", "大促价", "已抢", "假一赔十", "100%正品", "拼单价",
@@ -359,6 +359,10 @@ def extract_product_info(xml_content: str, search_word: str):
             match4 = re.search(r"降\d+\.?\d*", text)
             if match4:
                 split_at = min(split_at, match4.start())
+
+            match5 = re.search(r"\d{2}人想拼", text)
+            if match5:
+                split_at = min(split_at, match5.start())
             # 从最早匹配的位置截断，后面全部丢掉
             text = text[:split_at].strip()
             cleaned_texts.append(text)
@@ -433,7 +437,7 @@ def find_and_click_detail(max_scroll=7):
                 else:
                     d.press("back")
                     return False
-        d.swipe(500, 1800, 500, 600, 0.25)
+        d.drag(500, 1800, 500, 600, 0.25)
         time.sleep(0.8)
     return False
 
@@ -442,11 +446,11 @@ def get_date_with_retry():
     return m.group(1) if m else ""
 
 def collect_single_product(search_word, serial_num):
+    xml = d.dump_hierarchy()
+    info = extract_product_info(xml, search_word)
     subsidy = "是" if is_subsidy_product() else "否"
     detail = find_and_click_detail()
     date = get_date_with_retry() if detail else ""
-    xml = d.dump_hierarchy()
-    info = extract_product_info(xml, search_word)
     title = info["title"]
     ori = info["original_price"]
     cur = info["current_price"]
@@ -515,7 +519,7 @@ def select_and_collect_best_product(search_word, serial_num):
         for i, p in enumerate(candidates):
             print(f"--- 进入商品 {i + 1}/{len(candidates)} ---")
             d.click(p["cx"], p["cy"])
-            time.sleep(1)
+            time.sleep(0.5)
             res = collect_single_product(search_word, serial_num)
             if res["passed"]:
                 any_passed = True

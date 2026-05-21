@@ -431,7 +431,7 @@ def extract_product_info(xml_content: str, search_word: str) -> Dict[str, Option
     best_title = ""
     best_count = 0
     blacklist = [
-        "电池", "状态栏", "电量", "百分之", "WLAN", "手机信号", "5G", "4G",
+        "电池", "状态栏", "电量", "百分之", "WLAN", "信号",
         "通知", "高德", "淘宝", "浏览器", "手机管家", "振铃器", "静音",
         "返回", "分享", "店铺", "收藏", "客服", "工具栏", "顶部", "拼小圈",
         "¥", "￥", "大促价", "已抢", "假一赔十", "100%正品", "拼单价",
@@ -504,6 +504,10 @@ def extract_product_info(xml_content: str, search_word: str) -> Dict[str, Option
             match4 = re.search(r"降\d+\.?\d*", text)
             if match4:
                 split_at = min(split_at, match4.start())
+
+            match5 = re.search(r"\d{2}人想拼", text)
+            if match5:
+                split_at = min(split_at, match5.start())
             # 从最早匹配的位置截断，后面全部丢掉
             text = text[:split_at].strip()
             cleaned_texts.append(text)
@@ -513,7 +517,7 @@ def extract_product_info(xml_content: str, search_word: str) -> Dict[str, Option
     for t in cleaned_texts:
         prices = re.findall(r"[¥￥]\s*(\d+\.?\d*)", t)
         all_prices.extend(prices)
-    print(all_prices)
+
     # 4. 过滤规则：去掉 0开头 / 个位数（1-9）
     valid_prices = []
     for p in all_prices:
