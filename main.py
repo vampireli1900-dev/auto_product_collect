@@ -295,7 +295,7 @@ def search_product(d, keyword: str, index_num) -> None:
     print(f"\n搜索：{keyword}  序号：{index_num}")
     width, height = d.window_size()
     search_y = int(height * 200 / 2400)
-    d.swipe(width // 2, height // 2, width // 2, height // 2 + 400)
+    d.drag(width // 2, height // 2, width // 2, height // 2 + 400)
     time.sleep(1)
     d.click(width // 2, search_y)
     time.sleep(0.8)
@@ -378,15 +378,20 @@ def is_all_global(item_list) -> bool:
 
 
 def scroll_down_once(d) -> None:
-    d.swipe(500, 1800, 500, 600, 0.3)
-    time.sleep(2.5)
+    width, height = d.window_size()
+    d.drag(
+        width * 0.5,
+        height * 0.85,
+        width * 0.5,
+        height * 0.25,
+        duration=0.3
+    )
 
 
 def scroll_to_top(d) -> None:
     width, height = d.window_size()
     for _ in range(2):
-        d.swipe(width // 2, height // 2, width // 2, height // 2 + 1200)
-        time.sleep(0.8)
+        d.drag(width // 2, height * 0.2, width // 2, height * 0.8, 0.3)
 
 
 def sort_products_by_priority(d) -> list:
@@ -585,7 +590,15 @@ def find_and_click_detail(d, max_scroll: int = 7) -> bool:
                     return True
                 d.press("back")
                 return False
-        d.swipe(500, 1800, 500, 600, 0.25)
+        width, height = d.window_size()
+        # 原固定坐标：(500,1800)→(500,600) 向上拖
+        d.drag(
+            int(width * 0.46),
+            int(height * 0.75),
+            int(width * 0.46),
+            int(height * 0.25),
+            0.25
+        )
         time.sleep(0.8)
     return False
 

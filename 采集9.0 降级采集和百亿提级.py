@@ -237,13 +237,21 @@ def is_all_global(item_list):
     return all(not ("baiyi" in i["tags"] or "brand" in i["tags"]) for i in item_list)
 
 def scroll_down_once():
-    d.drag(500, 1800, 500, 600, 0.3)
+    width, height = d.window_size()
+    # 自适应屏幕 向上滑动（从屏幕 85% 位置 拖到 25% 位置）
+    d.drag(
+        width * 0.5,  # 起点 X：屏幕中间
+        height * 0.85,  # 起点 Y：下方 85%
+        width * 0.5,  # 终点 X：屏幕中间
+        height * 0.25,  # 终点 Y：上方 25%
+        duration=0.3
+    )
     time.sleep(2.5)
 
 def scroll_to_top():
     width, height = d.window_size()
     for _ in range(2):
-        d.drag(width // 2, height // 2, width // 2, height // 2 + 1200)
+        d.drag(width // 2, height * 0.2, width // 2, height * 0.8, 0.3)
         time.sleep(0.8)
 
 def sort_products_by_priority():
@@ -437,7 +445,15 @@ def find_and_click_detail(max_scroll=7):
                 else:
                     d.press("back")
                     return False
-        d.drag(500, 1800, 500, 600, 0.25)
+        width, height = d.window_size()
+        # 原固定坐标：(500,1800)→(500,600) 向上拖
+        d.drag(
+            int(width * 0.46),
+            int(height * 0.75),
+            int(width * 0.46),
+            int(height * 0.25),
+            0.25
+        )
         time.sleep(0.8)
     return False
 
