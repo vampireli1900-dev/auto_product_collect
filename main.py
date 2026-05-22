@@ -730,7 +730,16 @@ def select_and_collect_best_product(
         candidates = [p for p in sorted_prods if get_priority(p["tags"]) == prio]
         if not candidates:
             continue
-
+        # ====================== 全球购特殊处理：回到顶部 + 重新识别（不触发自动下滑）
+        if prio == 1:
+            print("🔽 降级到全球购，返回顶部并重新识别（不自动下滑）")
+            scroll_to_top()
+            time.sleep(1)
+            # 直接获取顶部商品，不调用 sort_products_by_priority（避免下滑）
+            raw = get_products_with_tags()
+            sorted_prods = sorted(raw, key=lambda x: get_priority(x["tags"]), reverse=True)
+            candidates = [p for p in sorted_prods if get_priority(p["tags"]) == prio]
+            candidates = candidates[:3]  # 最多采3个
         if prio == 1 and len(candidates) > 2:
             candidates = candidates[:2]
 

@@ -528,6 +528,16 @@ def select_and_collect_best_product(search_word, serial_num):
         candidates = [p for p in sorted_prods if get_priority(p["tags"]) == prio]
         if not candidates:
             continue
+        # ====================== 全球购特殊处理：回到顶部 + 重新识别（不触发自动下滑）
+        if prio == 1:
+            print("🔽 降级到全球购，返回顶部并重新识别（不自动下滑）")
+            scroll_to_top()
+            time.sleep(1)
+            # 直接获取顶部商品，不调用 sort_products_by_priority（避免下滑）
+            raw = get_products_with_tags()
+            sorted_prods = sorted(raw, key=lambda x: get_priority(x["tags"]), reverse=True)
+            candidates = [p for p in sorted_prods if get_priority(p["tags"]) == prio]
+            candidates = candidates[:3]  # 最多采3个
         print(f"\n===== 优先级 {prio}，共 {len(candidates)} 个商品 =====")
         time.sleep(0.5)
 
@@ -555,6 +565,19 @@ def select_and_collect_best_product(search_word, serial_num):
 
     return any_passed
 
+# ====================== 进度条工具 ======================
+def wait_with_progress(seconds):
+    import sys
+    bar_len = 30
+    for i in range(seconds):
+        filled = bar_len * (i + 1) // seconds
+        bar = "█" * filled + "-" * (bar_len - filled)
+        percent = (i + 1) / seconds * 100
+        sys.stdout.write(f"\r⏳ 等待下一个商品：[{bar}] {percent:.0f}% ({i+1}/{seconds}s)")
+        sys.stdout.flush()
+        time.sleep(1)
+    sys.stdout.write("\n")
+
 # ====================== 主循环 ======================
 def main():
     print("🚀 启动采集 + 品牌规格品名四重校验")
@@ -572,7 +595,9 @@ def main():
                 select_and_collect_best_product(kw, idx)
                 save_all_to_excel()
                 mark_product_as_done_by_index(idx)
-                time.sleep(SEARCH_INTERVAL_SECONDS)
+                # ========== 这里换成带进度条的等待 ==========
+                print(f"\n⏸ 等待 {SEARCH_INTERVAL_SECONDS} 秒后继续...")
+                wait_with_progress(SEARCH_INTERVAL_SECONDS)
                 ok = True
             except Exception as e:
                 print(f"❌ 异常：{e}")
