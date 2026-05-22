@@ -931,6 +931,18 @@ def _apply_main_args(args: argparse.Namespace) -> None:
         SEARCH_INTERVAL_SECONDS = int(args.interval)
 
 
+def wait_with_progress(seconds):
+    import sys
+    bar_len = 30
+    for i in range(seconds):
+        filled = bar_len * (i + 1) // seconds
+        bar = "█" * filled + "-" * (bar_len - filled)
+        percent = (i + 1) / seconds * 100
+        sys.stdout.write(f"\r⏳ 等待下一个商品：[{bar}] {percent:.0f}% ({i+1}/{seconds}s)")
+        sys.stdout.flush()
+        time.sleep(1)
+    sys.stdout.write("\n")
+
 def standalone_main(args: argparse.Namespace) -> None:
     _ensure_project_cwd()
 
@@ -1002,7 +1014,8 @@ def standalone_main(args: argparse.Namespace) -> None:
                 df = pd.read_excel(PRODUCT_LIST_FILE)
                 df.loc[df["序号"] == idx, "状态"] = result["status"]
                 df.to_excel(PRODUCT_LIST_FILE, index=False)
-                time.sleep(SEARCH_INTERVAL_SECONDS)
+                print(f"\n⏸ 等待 {SEARCH_INTERVAL_SECONDS} 秒后继续...")
+                wait_with_progress(SEARCH_INTERVAL_SECONDS)
                 ok = True
             except Exception as e:
                 print(f"异常：{e}")
