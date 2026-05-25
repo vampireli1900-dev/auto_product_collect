@@ -107,6 +107,7 @@ def save_all_to_excel():
             df.to_excel(writer, index=False, sheet_name="汇总")
             ws = writer.sheets["汇总"]
 
+
             # 表头样式
             header_font = Font(bold=True, color="FFFFFF")
             header_fill = PatternFill("solid", fgColor="4472C4")
@@ -296,7 +297,7 @@ def extract_product_info(xml_content: str, search_word: str):
     blacklist = [
         "电池", "状态栏", "电量", "百分之", "WLAN", "信号",
         "通知", "高德", "淘宝", "浏览器", "手机管家", "振铃器", "静音",
-        "返回", "分享", "店铺", "收藏", "客服", "工具栏", "顶部", "拼小圈",
+        "返回", "分享", "店铺", "客服", "工具栏", "顶部", "拼小圈",
         "¥", "￥", "大促价", "已抢", "假一赔十", "100%正品", "拼单价",
         "狂降", "直接成团", "买过", "次", "图片", "该店", "tronplayer_view", "查看全部",
     ]
