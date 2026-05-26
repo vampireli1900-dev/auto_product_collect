@@ -281,7 +281,6 @@ def normalize_token(tk):
     }
     return mapping.get(tk, tk)
 
-
 def word_bag_ratio(search_tokens, product_tokens):
     """
     搜索词中的 token 在商品中出现的比例。
