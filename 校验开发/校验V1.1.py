@@ -87,47 +87,6 @@ def fuzzy_contains_no_stop(core, target):
     pattern = '.*?'.join(re.escape(ch) for ch in filtered)
     return re.search(pattern, target) is not None
 
-def extract_concentration(text):
-    """
-    从文本中提取香精浓度类型，返回标准化标识。
-    返回值: 'heavy' (浓香/EDP/香精), 'light' (淡香/EDT/古龙水), 或 '' (未识别)
-    """
-    t = text.lower()
-    # 浓组
-    heavy_patterns = [
-        r'\bedp\b', r'parfum', r'浓香', r'浓香水', r'香精',
-        r'eaudeparfum', r'edp', r'浓香型'
-    ]
-    # 淡组
-    light_patterns = [
-        r'\bedt\b', r'\bedc\b', r'淡香', r'淡香水', r'古龙水',
-        r'eaudetoilette', r'eaudecologne', r'淡香型'
-    ]
-    for pat in heavy_patterns:
-        if re.search(pat, t):
-            return '浓香'
-    for pat in light_patterns:
-        if re.search(pat, t):
-            return '淡香'
-    return ''
-
-def extract_simple_pack(text):
-    """检测简装标识，返回'简装'或空字符串"""
-    t = text.lower()
-    if re.search(r'简装', t):
-        return '简装'
-    return ''
-
-def concentration_match(conc_a, conc_b):
-    """
-    浓度匹配规则：
-    - 如果任一为空，认为通过（无约束）
-    - 否则必须同组（heavy-heavy 或 light-light）才匹配
-    """
-    if not conc_a or not conc_b:
-        return True
-    return conc_a == conc_b
-
 def extract_specs(text):
     text = str(text).lower()
     cap_nums = set()
@@ -168,8 +127,7 @@ def extract_specs(text):
     # 后置 # 号
     for m in re.finditer(r'([A-Za-z0-9]+)#', text):
         code = m.group(1).lower()
-        # 移除纯数字限制，但过滤掉常见容量单位（如 30ml#）
-        if not re.search(r'(ml|g|oz|升|毫升)$', code):
+        if not code.isdigit():
             color_codes.add(code)
     # 紧贴“色”或“号”
     for m in re.finditer(r'\b([A-Za-z]?\d+[A-Za-z]*)\s*(色|号)\b', text):
@@ -195,30 +153,24 @@ def extract_specs(text):
         start = m.start()
         end = m.end()
         # 如果数字后紧跟“年”，跳过（年份信息）
-        if end < len(text) and (text[end] == '年' or text[end] == '款'):
+        if end < len(text) and text[end] == '年':
             continue
         prefix = text[max(0, start - 10):start]
         if re.search(r'(效期|到期|限用日期|保质期|\d\s*年|年)', prefix):
             continue
         if code not in cap_nums and code not in pack_set and not re.fullmatch(r'20\d{2}', code):
             color_codes.add(code)
-    color_codes = {c for c in color_codes if not re.search(r'(ml|g|oz|升|毫升)$', c.lower())}
 
     return cap_nums, color_codes   # 返回值不变，内部已处理 pack_set
 
 def match_brand(text):
-    """品牌匹配，返回标准品牌名，未匹配返回'未匹配'。优先匹配最长的别名。"""
+    """品牌匹配，返回标准品牌名，未匹配返回"未匹配" """
     txt = str(text).lower()
-    best_brand = "未匹配"
-    best_len = 0
     for name, aliases in brand_lib.items():
         for a in aliases:
-            a_lower = a.lower()
-            if a_lower in txt:
-                if len(a_lower) > best_len:
-                    best_len = len(a_lower)
-                    best_brand = name
-    return best_brand
+            if a.lower() in txt:
+                return name
+    return "未匹配"
 
 def clean_title(text, brand):
     """
@@ -334,27 +286,6 @@ def normalize_token(tk):
         '防晒露': '防晒',
         '子弹头': '子弹',
         # 可继续补充
-        '透亮': '提亮',
-        '焕白': '美白',
-        '亮白': '美白',
-        '提亮': '提亮',
-        '减黄': '去黄',
-        '去黄': '去黄',
-        '乳液': '乳',
-        '奶乳': '乳',
-        '乳美': '乳',
-        '白淡': '淡斑',
-        '斑乳': '乳',
-        '乳白': '乳',
-        '肌底液': '精华',
-        '第二代': '二代',
-        '润肤乳': '黄油',
-        '有油润肤': '黄油',    # 新增：解决本案例
-        '黄油': '黄油',
-        '能量水': '水',
-        '鲜活亮采': '水',
-        '亮采水': '水',
-        '红石榴': '红石榴',
     }
     return mapping.get(tk, tk)
 
@@ -411,28 +342,19 @@ def validate_product(
     # 2. 规格（分离容量与色号）
     s_cap, s_color = extract_specs(search_word)
     p_cap, p_color = extract_specs(product_title)
-    s_conc = extract_concentration(search_word)
-    p_conc = extract_concentration(product_title)
-    conc_ok = concentration_match(s_conc, p_conc)
-    s_simple = extract_simple_pack(search_word)
-    p_simple = extract_simple_pack(product_title)
-    simple_ok = (s_simple == p_simple) if s_simple and p_simple else True
 
     # 容量检查：搜索有容量时，要求是商品容量的子集
     if s_cap:
-        cap_ok = s_cap.issubset(p_cap)
+        spec_ok = s_cap.issubset(p_cap)
     else:
-        cap_ok = True
-
-    # 色号检查结果（搜索色号是否全部出现在商品文本中）
-    product_lower = product_title.lower()
-    color_ok = all(code in product_lower for code in s_color)
-
-    # 特殊规则：如果双方都有色号且色号匹配成功，则容量检查不再强制要求
-    if s_color and p_color and color_ok:
         spec_ok = True
-    else:
-        spec_ok = cap_ok and color_ok
+
+    # 色号检查：搜索中的每一个色号必须整体出现在商品文本中（忽略大小写）
+    product_lower = product_title.lower()
+    for code in s_color:
+        if code not in product_lower:
+            spec_ok = False
+            break
 
     # 3. 品名清洗
     s_clean = clean_title(search_word, s_brand)
@@ -469,7 +391,7 @@ def validate_product(
     if s_color:
         threshold = 0.3
     else:
-        threshold = 0.3
+        threshold = 0.5
     bag_ok = bag_ratio >= threshold
 
     if bag_ok:
@@ -490,9 +412,9 @@ def validate_product(
             ratio = common / len(s_clean)
         else:
             ratio = 1.0
-        name_ok = ratio >= 0.3
+        name_ok = (ratio >= 0.50) and (common >= 2)
         method = f'LCS子序列({ratio:.1%})'
-    final = brand_ok and spec_ok and conc_ok and simple_ok and name_ok
+    final = brand_ok and spec_ok and name_ok
 
     if final:
         reason_tail = "所有检查通过"
@@ -502,10 +424,6 @@ def validate_product(
             reasons_dbg.append("品牌不一致")
         if not spec_ok:
             reasons_dbg.append("规格不匹配")
-        if not conc_ok:
-            reasons_dbg.append("浓度不匹配")
-        if not simple_ok:
-            reasons_dbg.append("简装不匹配")
         if not name_ok:
             reasons_dbg.append(f"品名相似不足(ratio={ratio:.1%})")
         reason_tail = "；".join(reasons_dbg)
@@ -517,8 +435,6 @@ def validate_product(
         f"品牌    ：{s_brand} → {p_brand} | {'✅' if brand_ok else '❌'}",
         f"容量规格：{s_cap} → {p_cap} | {'✅' if spec_ok else '❌'}",
         f"色号    ：{s_color} → {p_color}",
-        f"浓度    ：{s_conc} → {p_conc} | {'✅' if conc_ok else '❌'}",
-        f"简装    ：{s_simple} → {p_simple} | {'✅' if simple_ok else '❌'}",
         f"清洗后  ：{s_clean} → {p_clean}",
         f"品名匹配：{method} | {'✅' if name_ok else '❌'}",
         f"结果    ：{'✅ PASS' if final else '❌ FAIL'} | 原因：{reason_tail}",
@@ -531,8 +447,6 @@ def validate_product(
     reasons = []
     if not brand_ok: reasons.append('品牌不一致')
     if not spec_ok: reasons.append('规格不匹配')
-    if not conc_ok: reasons.append('浓度不匹配')
-    if not simple_ok: reasons.append('简装不匹配')
     if not name_ok: reasons.append(f'品名相似不足(ratio={ratio:.1%})')
     remark = '；'.join(reasons) if reasons else '通过'
 
@@ -547,9 +461,6 @@ def validate_product(
         'p_cap': p_cap,
         's_color': s_color,
         'p_color': p_color,
-        's_conc': s_conc,
-        'p_conc': p_conc,
-        'conc_ok': conc_ok,
         's_clean': s_clean,
         'p_clean': p_clean,
         'method': method,
@@ -642,40 +553,3 @@ if __name__ == '__main__':
     validate_product("古驰竹韵淡香50ml",
                      "【正品行货】GUCCI古驰竹韵女士浓香水持久花香木质调EDP 50ml")
     print()
-    validate_product("后拱辰享水妍洁面180ml",
-                     "韩国Whoo水妍洗面奶180ml控油深层清洁保湿滋润")
-    print()
-    validate_product("娇韵诗双萃精华50ml九代新版",
-                     "【娇韵诗】九代双萃精华50ml/瓶滋润补水")
-    print()
-    validate_product("娇韵诗透亮焕白淡斑乳液75mL",
-                     "【正品行货】Clarins/娇韵诗牛奶乳75ml美白淡斑减黄提亮保湿滋润")
-    print()
-    validate_product("科颜氏白泥面膜125ml 24款",
-                     "Kiehls 科颜氏 亚马逊二代白泥面膜 125ml")
-    print()
-    validate_product("科颜氏 美白淡斑精华100ml",
-                     "Kiehl’s/科颜氏VC淡斑精华液 面部提亮焕白肤色均衡亮肤50/100ml【5天内发货】")
-    print()
-    validate_product("拉夫劳伦地球淡香氛 100ml",
-                     "【平潭保税】Ralph Lauren拉夫劳伦 地球淡香水EDT男女100ml简装")
-    print()
-    validate_product("拉夫劳伦俱乐部香水淡香型 100ML",
-                     "RALPH LAUREN拉夫劳伦俱乐部男士浓香水100ml木质调EDP送男友礼物")
-    print()
-    validate_product("资生堂男士乳液100ml",
-                     "【正品行货】资生堂男士焕能肌活滋润乳 100ml")
-    print()
-    validate_product("阿玛尼权力PR0粉底30ml#3",
-                     "【阿玛尼】权力粉底液 3 号新款 30ml 持妆控油遮瑕油皮亲妈持久")
-    print()
-    validate_product("倩碧有油润肤乳125ml",
-                     "【Clinique】倩碧黄油滋润(有油)125ml")
-    print()
-    validate_product("雅诗兰黛 红石榴洁面125ml",
-                     "【ESTEE LAUDER】雅诗兰黛新款红石榴洗面奶125ml")
-    print()
-    validate_product("MAC魅可 轻尤雾弹 哑光唇釉973 5ml 新版",
-                     "【MAC】魅可尤雾弹唇釉新色裸色系列哑光秋冬显色口红952/996/997/973【5天内发货】")
-    print()
-
