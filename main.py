@@ -26,7 +26,7 @@ _PROJECT_DIR = os.path.abspath(
     os.environ.get("COLLECT_PROJECT_DIR") or os.path.dirname(os.path.abspath(__file__))
 )
 PRODUCT_LIST_FILE = os.path.abspath(
-    os.environ.get("COLLECT_TASK_XLSX") or os.path.join(_PROJECT_DIR, "搜索名单.xlsx")
+    os.environ.get("COLLECT_TASK_XLSX") or os.path.join(_PROJECT_DIR, "测试用例.xlsx")
 )
 SUMMARY_XLSX = os.path.abspath(
     os.environ.get("COLLECT_SUMMARY_XLSX") or os.path.join(_PROJECT_DIR, "商品采集汇总.xlsx")

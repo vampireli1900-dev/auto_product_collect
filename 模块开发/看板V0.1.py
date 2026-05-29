@@ -5,7 +5,7 @@ import os
 
 # -------------------------- 全局配置 & 默认任务路径 --------------------------
 st.set_page_config(page_title="多机群控采集系统", layout="wide", initial_sidebar_state="expanded")
-DEFAULT_TASK_PATH = "/Users/vincentli/PycharmProjects/PythonProject/2026-4 群控/yolo/整合详情页采集/搜索名单.xlsx"
+DEFAULT_TASK_PATH = "/2026-4 群控/yolo/整合详情页采集/测试用例.xlsx"
 
 # 初始化全局状态
 if "task_df" not in st.session_state:

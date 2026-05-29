@@ -19,7 +19,7 @@ detail_model = YOLO("../runs/detect/product_detail_train/weights/best.pt")
 reader = easyocr.Reader(['ch_sim'], gpu=False)
 
 # ====================== 【新增配置项】 ======================
-PRODUCT_LIST_FILE = "../搜索名单.xlsx"  # 商品名单Excel
+PRODUCT_LIST_FILE = "../模块开发/测试用例.xlsx"  # 商品名单Excel
 SEARCH_INTERVAL_SECONDS = 5           # 每个商品采集完等待秒数
 
 # ====================== 全局存储所有商品记录 ======================

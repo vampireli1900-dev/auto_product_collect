@@ -16,7 +16,7 @@ brand_lib = {
     "碧欧泉": ["Biotherm", "碧欧泉"],
     "薇姿": ["Vichy", "薇姿"],
     "德美乐嘉": ["Dermalogica", "德美乐嘉"],
-    "雅诗兰黛": ["EsteeLauder", "Estée Lauder", "ESTEE LAUDER", "雅诗兰黛"],
+    "雅诗兰黛": ["EsteeLauder", "Estée Lauder", "ESTEE LAUDER", "雅诗兰黛", "红石榴"],
     "大宝": ["Embryolisse", "大宝"],
     "薇迪薇奇": ["VidiVici", "Vidi Vici", "薇迪薇奇"],
     "肌肤之钥": ["CPB", "CleDePeauBeaute", "Cle de Peau Beauté", "肌肤之钥", "cledepece"],
@@ -132,9 +132,9 @@ def extract_specs(text):
     text = str(text).lower()
     cap_nums = set()
     color_codes = set()
-    pack_set = set()
+    pack_set = set()   # 包装数字，防止被当成色号
 
-    # ---------- 容量 ----------
+    # ---------- 容量（不变）----------
     cap_pattern = r'(\d+(?:\.\d+)?(?:\s*[-/]\s*\d+(?:\.\d+)?)*)\s*(ml|g|l|oz|片|粒|枚|对|支|个|盒|瓶|块|毫升|克|升)'
     for match in re.finditer(cap_pattern, text):
         num_part = match.group(1)
@@ -149,22 +149,26 @@ def extract_specs(text):
             except:
                 cap_nums.add(n)
 
-    # ---------- 包装数量 ----------
+    # ---------- 包装数量（新加入，必须在纯数字色号之前）----------
+    # 1. *2, x2, ×2 等
     for m in re.finditer(r'[\*xX×]\s*(\d+)', text):
         pack_set.add(m.group(1))
+    # 2. 2支, 2支装, 2个, 2瓶 等
     for m in re.finditer(r'(\d+)\s*(支|个|件|瓶|盒|对|组)\s*装?', text):
         pack_set.add(m.group(1))
+    # 3. 中文数量词：两支装、三瓶等
     chinese_num_map = {'两':'2','三':'3','四':'4','五':'5','六':'6'}
     for m in re.finditer(r'(两|三|四|五|六)\s*(支|个|瓶|盒|对|组)\s*装?', text):
         pack_set.add(chinese_num_map[m.group(1)])
 
-    # ---------- 色号 ----------
+    # ---------- 色号（调整纯数字部分）----------
     # 带 # 号
     for m in re.finditer(r'#([A-Za-z0-9]+)', text):
         color_codes.add(m.group(1).lower())
     # 后置 # 号
     for m in re.finditer(r'([A-Za-z0-9]+)#', text):
         code = m.group(1).lower()
+        # 移除纯数字限制，但过滤掉常见容量单位（如 30ml#）
         if not re.search(r'(ml|g|oz|升|毫升)$', code):
             color_codes.add(code)
     # 紧贴“色”或“号”
@@ -175,7 +179,7 @@ def extract_specs(text):
         code = m.group(1)
         if not re.fullmatch(r'\d{4}', code) and code not in cap_nums:
             color_codes.add(code)
-    # 单字母/数字色号（如 L1, N2）
+    # 单字母/数字色号（如 L1, N2），长度 2-4，排除容量数字
     for m in re.finditer(r'(?<![a-z0-9])([A-Za-z]\d+)(?![a-z0-9])', text):
         code = m.group(1).lower()
         if code not in cap_nums:
@@ -185,27 +189,22 @@ def extract_specs(text):
         code = m.group(1).lower()
         if code not in cap_nums:
             color_codes.add(code)
-    # 纯数字色号（2~4位），排除容量、包装、年份、有效期、日期
+    # 纯数字色号（2~4位），排除容量、包装、年份、有效期
     for m in re.finditer(r'(?<!\d)(\d{2,4})(?!\d)', text):
         code = m.group(1)
         start = m.start()
         end = m.end()
-        # 如果数字后紧跟“年”或“款”，跳过
+        # 如果数字后紧跟“年”，跳过（年份信息）
         if end < len(text) and (text[end] == '年' or text[end] == '款'):
             continue
-        # 检查前后是否有“月”或“日”（日期数字）
-        before = text[max(0, start-3):start]
-        after = text[end:min(len(text), end+3)]
-        if re.search(r'月|日', before) or re.search(r'月|日', after):
-            continue
-        prefix = text[max(0, start-10):start]
+        prefix = text[max(0, start - 10):start]
         if re.search(r'(效期|到期|限用日期|保质期|\d\s*年|年)', prefix):
             continue
         if code not in cap_nums and code not in pack_set and not re.fullmatch(r'20\d{2}', code):
             color_codes.add(code)
-
     color_codes = {c for c in color_codes if not re.search(r'(ml|g|oz|升|毫升)$', c.lower())}
-    return cap_nums, color_codes
+
+    return cap_nums, color_codes   # 返回值不变，内部已处理 pack_set
 
 def match_brand(text):
     """品牌匹配，返回标准品牌名，未匹配返回'未匹配'。优先匹配最长的别名。"""
@@ -460,6 +459,11 @@ def validate_product(
         p_tokens = p_tokens_raw
 
     bag_ratio = word_bag_ratio(s_tokens, p_tokens)
+
+    # 调试输出（可选保留）
+    print(f"[DEBUG] 搜索词 tokens (过滤后): {s_tokens}")
+    print(f"[DEBUG] 商品 tokens  (过滤后): {p_tokens}")
+    print(f"[DEBUG] bag_ratio = {bag_ratio:.2f}")
 
     # 色号辅助动态阈值
     if s_color:

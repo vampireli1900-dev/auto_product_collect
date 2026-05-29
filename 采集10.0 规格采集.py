@@ -13,6 +13,7 @@ from datetime import datetime
 from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils import get_column_letter
 from product_validator import validate_product   # 导入新版校验
+import sku_matcher   # 新增导入
 import traceback
 
 logging.disable(logging.WARNING)
@@ -26,7 +27,7 @@ detail_model = YOLO("runs/detect/product_detail_train/weights/best.pt")
 reader = easyocr.Reader(['ch_sim'], gpu=False)
 
 # ====================== 配置项 ======================
-PRODUCT_LIST_FILE = "搜索名单.xlsx"
+PRODUCT_LIST_FILE = "模块开发/测试用例.xlsx"
 SEARCH_INTERVAL_SECONDS = 60
 PACKAGE_NAME = "com.xunmeng.pinduoduo"
 
@@ -36,7 +37,8 @@ debug_record_list = []
 
 EXCEL_HEADER = [
     "序号", "货品名称", "关键词", "原价", "现价",
-    "是否百亿补贴产品", "生产日期", "校验通过", "未通过原因"
+    "是否百亿补贴产品", "生产日期", "校验通过", "未通过原因",
+    "匹配规格", "规格价格"          # 新增两列
 ]
 
 DEBUG_EXCEL_HEADER = [
@@ -44,7 +46,8 @@ DEBUG_EXCEL_HEADER = [
     "搜索词匹配品牌", "商品标题匹配品牌",
     "品牌是否一致", "规格是否匹配通过",
     "品名匹配率(%)", "最终校验是否通过",
-    "校验时间", "备注/失败原因"
+    "校验时间", "备注/失败原因",
+    "匹配规格", "规格价格"
 ]
 
 # ====================== 保存调试记录 ======================
@@ -462,29 +465,93 @@ def get_date_with_retry():
     m = re.search(r'text="(\d{4}-\d{1,2}-\d{1,2})"', d.dump_hierarchy())
     return m.group(1) if m else ""
 
+
 def collect_single_product(search_word, serial_num):
     xml = d.dump_hierarchy()
     info = extract_product_info(xml, search_word)
     subsidy = "是" if is_subsidy_product() else "否"
+
+    title = info["title"]
+
+    # ========== 规格匹配触发条件（精细判断） ==========
+    matched_spec = ""
+    spec_price = ""
+
+    # 提取搜索词和标题中的规格标识
+    search_ids = sku_matcher.get_sku_identifiers(search_word)
+    title_ids = sku_matcher.get_sku_identifiers(title) if title else []
+
+    trigger = False
+    if search_ids:
+        # 搜索词有规格
+        if not title_ids:
+            # 标题无规格 → 触发（情况1）
+            trigger = True
+            print(f"🔎 搜索词有规格 {search_ids}，标题无规格，触发规格匹配")
+        elif len(title_ids) >= 2:
+            # 标题有多个规格 → 触发（情况2）
+            trigger = True
+            print(f"🔎 搜索词有规格 {search_ids}，标题有多个规格 {title_ids}，触发规格匹配")
+        elif len(title_ids) == 1:
+            # 标题只有一个规格：检查是否与搜索词中的某个规格匹配（忽略大小写）
+            if title_ids[0].lower() not in [s.lower() for s in search_ids]:
+                trigger = True
+                print(f"🔎 搜索词有规格 {search_ids}，标题唯一规格 {title_ids[0]} 不匹配，触发规格匹配")
+            else:
+                print(f"ℹ️ 搜索词有规格 {search_ids}，标题规格 {title_ids[0]} 一致，不触发规格匹配")
+    else:
+        # 搜索词无规格，但标题有多个规格 → 触发
+        if len(title_ids) >= 2:
+            trigger = True
+            print(f"🔎 搜索词无规格，标题有多个规格 {title_ids}，触发规格匹配")
+
+    if trigger:
+        try:
+            width, height = d.window_size()
+            d.click(int(width * 0.8), int(height * 0.96))
+            time.sleep(1.5)
+            spec_result = sku_matcher.get_sku_price_auto(d, search_word, click_timeout=1.5)
+            if spec_result["current_price"]:
+                matched_spec = spec_result["title"]
+                spec_price = spec_result["current_price"]
+                print(f"✅ 规格匹配成功：{matched_spec}，价格：{spec_price}")
+            else:
+                print("⚠️ 规格匹配未获取到有效价格")
+            d.press("back")
+            time.sleep(1)
+        except Exception as e:
+            print(f"❌ 规格匹配异常：{e}")
+            d.press("back")
+            time.sleep(1)
+    # ==================================================
+
+    # 原有生产日期查找
     detail = find_and_click_detail()
     date = get_date_with_retry() if detail else ""
+
     title = info["title"]
     ori = info["original_price"]
     cur = info["current_price"]
 
-    # 调用校验
+    # 如果规格匹配到了价格，优先用规格价格作为现价
+    if spec_price:
+        cur = spec_price
+
+    # 调用校验（原有）
     res = validate_product(search_word, title)
     match_pass = res['final']
     fail_reason = "" if match_pass else res.get("remark", "校验未通过")
 
-    # ====================== 这里修改了 ======================
+    # 写入记录（注意增加了两个字段）
     record_list.append([
         serial_num, title, search_word, ori, cur, subsidy, date,
         "✅" if match_pass else "❌",
-        fail_reason
+        fail_reason,
+        matched_spec,  # 新增
+        spec_price  # 新增
     ])
 
-    # 调试记录
+    # 调试记录（同样增加）
     debug_record_list.append([
         len(debug_record_list) + 1,
         search_word,
@@ -496,13 +563,18 @@ def collect_single_product(search_word, serial_num):
         round(res['ratio'] * 100, 2),
         "是" if res['final'] else "否",
         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        res['remark']
+        res['remark'],
+        matched_spec,  # 新增
+        spec_price  # 新增
     ])
 
+    # 打印信息（可加规格信息）
     print("\n" + "=" * 80)
     print(f"货品名称：{title}")
     print(f"关键词：{search_word}")
     print(f"原价：{ori} | 现价：{cur}")
+    if matched_spec:
+        print(f"匹配规格：{matched_spec} | 规格价格：{spec_price}")
     print(f"百亿补贴：{subsidy} | 日期：{date}")
     print(f"校验通过：{'✅' if match_pass else '❌'} {match_pass}")
     print("=" * 80)
@@ -512,7 +584,9 @@ def collect_single_product(search_word, serial_num):
         "subsidy": subsidy,
         "date": date,
         "found_detail": detail,
-        "passed": match_pass
+        "passed": match_pass,
+        "matched_spec": matched_spec,
+        "spec_price": spec_price
     }
 
 def select_and_collect_best_product(search_word, serial_num):

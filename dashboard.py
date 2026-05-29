@@ -15,7 +15,7 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 os.chdir(BASE_DIR)
 
-DEFAULT_TASK_PATH = os.path.join(BASE_DIR, "搜索名单.xlsx")
+DEFAULT_TASK_PATH = os.path.join(BASE_DIR, "测试用例.xlsx")
 LOG_FILE = os.path.join(BASE_DIR, "collector_logs.txt")
 COLLECT_SUMMARY_PATH = os.path.join(BASE_DIR, "商品采集汇总.xlsx")
 
