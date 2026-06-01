@@ -250,7 +250,7 @@ def get_sku_identifiers(search_word: str) -> list:
         if cap_id not in seen:
             identifiers.append(cap_id)
 
-    print(f"[DEBUG][get_sku_identifiers] 输入: '{search_word}'")
+
     print(f"[DEBUG][get_sku_identifiers] 提取标识: {identifiers}")
     return identifiers
 
@@ -363,7 +363,7 @@ def _click_sku_by_identifier(d, identifier: str, timeout: float = 2.0) -> bool:
         if w.lower() not in brand_set:
             click_word = w.lower()
             break
-    print(f"[DEBUG][_click_sku_by_identifier] 用于点击的关键词: '{click_word}'")
+
 
     # 方法1：使用 uiautomator2 内置的忽略大小写匹配（推荐）
     # 匹配文本（包括 text 和 content-desc 属性）
@@ -383,41 +383,37 @@ def _click_sku_by_identifier(d, identifier: str, timeout: float = 2.0) -> bool:
             time.sleep(timeout)
             return True
     except Exception as e:
-        print(f"[DEBUG][_click_sku_by_identifier] ignoreCase 方式失败: {e}")
+        pass
+        # print(f"[DEBUG][_click_sku_by_identifier] ignoreCase 方式失败: {e}")
 
     # 方法2：手动 XPath 忽略大小写（修正换行问题）
     xpath_text = f'//*[contains(translate(@text, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "{click_word}")]'
     elem = d.xpath(xpath_text)
     if elem.exists:
         elem.click()
-        print(f"[DEBUG][_click_sku_by_identifier] XPath 点击文本成功")
         time.sleep(timeout)
         return True
     xpath_desc = f'//*[contains(translate(@content-desc, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "{click_word}")]'
     elem_desc = d.xpath(xpath_desc)
     if elem_desc.exists:
         elem_desc.click()
-        print(f"[DEBUG][_click_sku_by_identifier] XPath 点击 description 成功")
         time.sleep(timeout)
         return True
 
-    print(f"[DEBUG][_click_sku_by_identifier] 未找到可点击控件")
     return False
 
 
 def _select_style_if_needed(d, timeout: float = 1.5) -> bool:
     """检查是否需要点击款式，使用 XPath 定位并点击；先下滑一次确保款式可见"""
-    print("[DEBUG][_select_style_if_needed] 检查是否需要选择款式...")
 
     # 先向下滑动一次，让款式选项进入视野
     try:
         width, height = d.window_size()
         d.drag(width * 0.5, height * 0.8, width * 0.5, height * 0.4, duration=0.3)
         time.sleep(0.5)
-        print("[DEBUG][_select_style_if_needed] 已向下滑动，等待款式出现")
     except Exception as e:
-        print(f"[DEBUG][_select_style_if_needed] 滑动异常: {e}")
-
+        # print(f"[DEBUG][_select_style_if_needed] 滑动异常: {e}")
+        pass
     max_attempts = 2
     for attempt in range(max_attempts):
         try:
@@ -432,7 +428,7 @@ def _select_style_if_needed(d, timeout: float = 1.5) -> bool:
                 for node in nodes:
                     text = node.attrib.get('text', '')
                     if pattern.search(text):
-                        print(f"[DEBUG][_select_style_if_needed] 跳过色号: {text}")
+                        # print(f"[DEBUG][_select_style_if_needed] 跳过色号: {text}")
                         continue
                     style_nodes.append(node)
                 if style_nodes:
@@ -452,18 +448,18 @@ def _select_style_if_needed(d, timeout: float = 1.5) -> bool:
                     target = style_nodes[0]
                     target.click()
                     text = target.attrib.get('text', '')
-                    print(f"[DEBUG][_select_style_if_needed] XPath 点击款式: {text}")
+                    # print(f"[DEBUG][_select_style_if_needed] XPath 点击款式: {text}")
                     time.sleep(timeout)
                     return True
 
             # 没有找到款式，且是第一次尝试，则再向下滑动
             if attempt == 0:
-                print("[DEBUG][_select_style_if_needed] 未找到款式，尝试再次向下滑动")
+                # print("[DEBUG][_select_style_if_needed] 未找到款式，尝试再次向下滑动")
                 width, height = d.window_size()
                 d.drag(width * 0.5, height * 0.7, width * 0.5, height * 0.3, duration=0.3)
                 time.sleep(1)
             else:
-                print("[DEBUG][_select_style_if_needed] 滑动后仍未找到款式")
+                # print("[DEBUG][_select_style_if_needed] 滑动后仍未找到款式")
                 return False
         except Exception as e:
             print(f"[DEBUG][_select_style_if_needed] 异常: {e}")
