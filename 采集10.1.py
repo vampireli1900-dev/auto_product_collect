@@ -480,11 +480,11 @@ def collect_single_product(search_word, serial_num):
 
     matched_spec = ""
     spec_price = ""
-    _, title_color_codes = sku_matcher.extract_specs(title)  # 注意 extract_specs 返回 (cap_nums, color_codes)
+    title_cap_nums, title_color_codes = sku_matcher.extract_specs(title)
 
-    # 触发条件：校验失败且原因含规格 或 标题色号数量大于1
-    if (not match_pass and any(kw in fail_reason for kw in ["规格", "色号", "容量", "浓度"])) or len(title_color_codes) > 1:
-        if len(title_color_codes) > 1:
+    # 触发条件：校验失败且原因含规格 或 标题容量>1 或 标题色号>1
+    if (not match_pass and any(kw in fail_reason for kw in ["规格", "色号", "容量", "浓度"])) or len(title_cap_nums) > 1 or len(title_color_codes) > 1:
+        if len(title_cap_nums) > 1:
             print(f"🔧 标题包含多规格 {title_color_codes}，尝试进入规格面板匹配...")
         else:
             print(f"🔧 校验失败原因为规格不匹配，尝试进入规格面板匹配...")

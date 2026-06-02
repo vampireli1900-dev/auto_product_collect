@@ -185,21 +185,35 @@ def extract_specs(text):
         code = m.group(1).lower()
         if code not in cap_nums:
             color_codes.add(code)
-    # 纯数字色号（2~4位），排除容量、包装、年份、有效期、日期
+    # 纯数字色号（2~4位），排除容量、包装、年份、有效期、日期，以及营销数字（如“106.3万”）
     for m in re.finditer(r'(?<!\d)(\d{2,4})(?!\d)', text):
         code = m.group(1)
         start = m.start()
         end = m.end()
-        # 如果数字后紧跟“年”或“款”，跳过
+        # 如果数字后紧跟“万”或“w”（含小数点情况已在前面匹配时分离，但这里直接检查后续字符）
+        after = text[end:end+2]
+        if after.startswith('万') or after.startswith('w'):
+            continue
+        # 如果数字前有“万”（如“106.3万”中的“.3”部分不会匹配到纯数字，但“106”前面可能是小数点，需要更精细）
+        # 检查数字前面是否有小数点（表示是小数部分），如果有，跳过
+        if start > 0 and text[start-1] == '.':
+            continue
+        # 如果数字后紧跟“+”或“条”等，也跳过
+        if after.startswith('+') or after.startswith('条'):
+            continue
+        # 检查前面是否有“热销”“好评”“销量”等营销词
+        prefix = text[max(0, start-10):start]
+        if re.search(r'(热销|好评|销量|评分|万\+?)', prefix):
+            continue
+        # 原有其他检查...
         if end < len(text) and (text[end] == '年' or text[end] == '款'):
             continue
-        # 检查前后是否有“月”或“日”（日期数字）
         before = text[max(0, start-3):start]
-        after = text[end:min(len(text), end+3)]
-        if re.search(r'月|日', before) or re.search(r'月|日', after):
+        after2 = text[end:min(len(text), end+3)]
+        if re.search(r'月|日', before) or re.search(r'月|日', after2):
             continue
-        prefix = text[max(0, start-10):start]
-        if re.search(r'(效期|到期|限用日期|保质期|\d\s*年|年)', prefix):
+        prefix2 = text[max(0, start-10):start]
+        if re.search(r'(效期|到期|限用日期|保质期|\d\s*年|年)', prefix2):
             continue
         if code not in cap_nums and code not in pack_set and not re.fullmatch(r'20\d{2}', code):
             color_codes.add(code)
@@ -249,6 +263,8 @@ def clean_title(text, brand):
         r'热销\d+\.?\d*万件',
         r'热销\d+件',
         r'\d+\.?\d*万件',
+        r'\d+\.?\d*\s*万\+?',  # 106.3万+
+        r'品牌好评[\d\.]+万\+?条',  # 品牌好评106.3万+条
         r'法国直发|进口|原装|专柜|正品|保税仓|直邮|发货',
         r'【.*?】|\[.*?\]|\(.*?\)',
         r'女士|男士',
@@ -674,4 +690,6 @@ if __name__ == '__main__':
     validate_product("MAC魅可 轻尤雾弹 哑光唇釉973 5ml 新版",
                      "【MAC】魅可尤雾弹唇釉新色裸色系列哑光秋冬显色口红952/996/997/973【5天内发货】")
     print()
-
+    validate_product("阿玛尼红气垫替换芯2#-24年",
+                     "【品牌好评106.3万+条】GIORGIO ARMANI/阿玛尼红气垫替换芯15g#2号色单双个控油持妆新款")
+    print()
