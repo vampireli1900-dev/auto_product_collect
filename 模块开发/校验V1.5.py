@@ -16,7 +16,7 @@ brand_lib = {
     "碧欧泉": ["Biotherm", "碧欧泉"],
     "薇姿": ["Vichy", "薇姿"],
     "德美乐嘉": ["Dermalogica", "德美乐嘉"],
-    "雅诗兰黛": ["EsteeLauder", "Estée Lauder", "ESTEE LAUDER", "雅诗兰黛", "红石榴"],
+    "雅诗兰黛": ["EsteeLauder", "Estée Lauder", "ESTEE LAUDER", "雅诗兰黛"],
     "大宝": ["Embryolisse", "大宝"],
     "薇迪薇奇": ["VidiVici", "Vidi Vici", "薇迪薇奇"],
     "肌肤之钥": ["CPB", "CleDePeauBeaute", "Cle de Peau Beauté", "肌肤之钥", "cledepece"],
@@ -132,10 +132,10 @@ def extract_specs(text):
     text = str(text).lower()
     cap_nums = set()
     color_codes = set()
-    pack_set = set()   # 包装数字，防止被当成色号
+    pack_set = set()
 
-    # ---------- 容量（不变）----------
-    cap_pattern = r'(\d+(?:\.\d+)?(?:\s*[-/]\s*\d+(?:\.\d+)?)*)\s*(ml|g|l|oz|片|粒|枚|对|支|个|盒|瓶|块|毫升|克|升)'
+    # ---------- 容量 ----------
+    cap_pattern = r'(\d+(?:\.\d+)?(?:\s*[-/]\s*\d+(?:\.\d+)?)*)\s*(ml|g|l|oz|片|粒|枚|对|支|个|盒|瓶|块|毫升|克|升|条)'
     for match in re.finditer(cap_pattern, text):
         num_part = match.group(1)
         nums = re.findall(r'\d+\.?\d*', num_part)
@@ -149,26 +149,22 @@ def extract_specs(text):
             except:
                 cap_nums.add(n)
 
-    # ---------- 包装数量（新加入，必须在纯数字色号之前）----------
-    # 1. *2, x2, ×2 等
+    # ---------- 包装数量 ----------
     for m in re.finditer(r'[\*xX×]\s*(\d+)', text):
         pack_set.add(m.group(1))
-    # 2. 2支, 2支装, 2个, 2瓶 等
     for m in re.finditer(r'(\d+)\s*(支|个|件|瓶|盒|对|组)\s*装?', text):
         pack_set.add(m.group(1))
-    # 3. 中文数量词：两支装、三瓶等
     chinese_num_map = {'两':'2','三':'3','四':'4','五':'5','六':'6'}
     for m in re.finditer(r'(两|三|四|五|六)\s*(支|个|瓶|盒|对|组)\s*装?', text):
         pack_set.add(chinese_num_map[m.group(1)])
 
-    # ---------- 色号（调整纯数字部分）----------
+    # ---------- 色号 ----------
     # 带 # 号
     for m in re.finditer(r'#([A-Za-z0-9]+)', text):
         color_codes.add(m.group(1).lower())
     # 后置 # 号
     for m in re.finditer(r'([A-Za-z0-9]+)#', text):
         code = m.group(1).lower()
-        # 移除纯数字限制，但过滤掉常见容量单位（如 30ml#）
         if not re.search(r'(ml|g|oz|升|毫升)$', code):
             color_codes.add(code)
     # 紧贴“色”或“号”
@@ -179,7 +175,7 @@ def extract_specs(text):
         code = m.group(1)
         if not re.fullmatch(r'\d{4}', code) and code not in cap_nums:
             color_codes.add(code)
-    # 单字母/数字色号（如 L1, N2），长度 2-4，排除容量数字
+    # 单字母/数字色号（如 L1, N2）
     for m in re.finditer(r'(?<![a-z0-9])([A-Za-z]\d+)(?![a-z0-9])', text):
         code = m.group(1).lower()
         if code not in cap_nums:
@@ -189,22 +185,41 @@ def extract_specs(text):
         code = m.group(1).lower()
         if code not in cap_nums:
             color_codes.add(code)
-    # 纯数字色号（2~4位），排除容量、包装、年份、有效期
+    # 纯数字色号（2~4位），排除容量、包装、年份、有效期、日期，以及营销数字（如“106.3万”）
     for m in re.finditer(r'(?<!\d)(\d{2,4})(?!\d)', text):
         code = m.group(1)
         start = m.start()
         end = m.end()
-        # 如果数字后紧跟“年”，跳过（年份信息）
+        # 如果数字后紧跟“万”或“w”（含小数点情况已在前面匹配时分离，但这里直接检查后续字符）
+        after = text[end:end+2]
+        if after.startswith('万') or after.startswith('w'):
+            continue
+        # 如果数字前有“万”（如“106.3万”中的“.3”部分不会匹配到纯数字，但“106”前面可能是小数点，需要更精细）
+        # 检查数字前面是否有小数点（表示是小数部分），如果有，跳过
+        if start > 0 and text[start-1] == '.':
+            continue
+        # 如果数字后紧跟“+”或“条”等，也跳过
+        if after.startswith('+') or after.startswith('条'):
+            continue
+        # 检查前面是否有“热销”“好评”“销量”等营销词
+        prefix = text[max(0, start-10):start]
+        if re.search(r'(热销|好评|销量|评分|万\+?)', prefix):
+            continue
+        # 原有其他检查...
         if end < len(text) and (text[end] == '年' or text[end] == '款'):
             continue
-        prefix = text[max(0, start - 10):start]
-        if re.search(r'(效期|到期|限用日期|保质期|\d\s*年|年)', prefix):
+        before = text[max(0, start-3):start]
+        after2 = text[end:min(len(text), end+3)]
+        if re.search(r'月|日', before) or re.search(r'月|日', after2):
+            continue
+        prefix2 = text[max(0, start-10):start]
+        if re.search(r'(效期|到期|限用日期|保质期|\d\s*年|年)', prefix2):
             continue
         if code not in cap_nums and code not in pack_set and not re.fullmatch(r'20\d{2}', code):
             color_codes.add(code)
-    color_codes = {c for c in color_codes if not re.search(r'(ml|g|oz|升|毫升)$', c.lower())}
 
-    return cap_nums, color_codes   # 返回值不变，内部已处理 pack_set
+    color_codes = {c for c in color_codes if not re.search(r'(ml|g|oz|升|毫升)$', c.lower())}
+    return cap_nums, color_codes
 
 def match_brand(text):
     """品牌匹配，返回标准品牌名，未匹配返回'未匹配'。优先匹配最长的别名。"""
@@ -236,10 +251,12 @@ def clean_title(text, brand):
             s = re.sub(re.escape(alias.lower()), '', s, flags=re.I)
 
     # 2. 去掉容量相关字符串
-    s = re.sub(r'(?:\d+[\-\/\s]*)*\d+\.?\d*\s*(ml|g|l|oz|片|粒|枚|对|支|个|盒|瓶|块|毫升|克|升)', '', s, flags=re.I)
-
+    s = re.sub(r'(?:\d+[\-\/\s]*)*\d+\.?\d*\s*(ml|g|l|oz|片|粒|枚|对|支|个|盒|瓶|块|毫升|克|升|条)', '', s, flags=re.I)
     # 4. 移除营销/噪声短语（持续可扩充）
     noise_phrases = [
+        r'绮梦',   # 删除系列名/营销词
+        r'栀',  # 删除系列名/营销词
+        r'轻垫',
         r'/\s*(支|个|件|瓶|盒|对|组)',  # 移除 /支、/个 等包装单位
         r'(新\s*)?条码',  # 移除“新条码”、“条码”
         r'效期\d{2,4}年',  # 保质期信息
@@ -248,9 +265,10 @@ def clean_title(text, brand):
         r'热销\d+\.?\d*万件',
         r'热销\d+件',
         r'\d+\.?\d*万件',
+        r'\d+\.?\d*\s*万\+?',  # 106.3万+
+        r'品牌好评[\d\.]+万\+?条',  # 品牌好评106.3万+条
         r'法国直发|进口|原装|专柜|正品|保税仓|直邮|发货',
         r'【.*?】|\[.*?\]|\(.*?\)',
-        r'女士|男士',
         r'浓香|淡香|edp|edt|edc|香水|香氛',
         r'水光|绚色|光感|自然色?\b|自然',   # “自然”可能有“自然色”，我们删除“自然色”优先
         r'奶桃|西柚|烟粉|豆沙|粉金|小粉金',
@@ -355,6 +373,26 @@ def normalize_token(tk):
         '鲜活亮采': '水',
         '亮采水': '水',
         '红石榴': '红石榴',
+        '口红': '唇膏',
+        '唇膏': '唇膏',
+        '金管': '金',
+        '金色': '金',
+        '短管': '管',
+        '哑光': '哑光',  # 可选
+        # 遮瑕类
+        '遮瑕膏': '遮瑕',
+        '遮瑕蜜': '遮瑕',
+        '遮瑕': '遮瑕',
+        # 香草与vanilla
+        '香草': 'vanilla',
+        'vanilla': 'vanilla',
+        # 色号词（可忽略）
+        '色号': '',
+        '男生': '男士',
+        '男士': '男士',
+        '爽肤水': '爽肤水',
+        '均衡水': '爽肤水',
+        '活力均衡水': '爽肤水',
     }
     return mapping.get(tk, tk)
 
@@ -459,11 +497,6 @@ def validate_product(
         p_tokens = p_tokens_raw
 
     bag_ratio = word_bag_ratio(s_tokens, p_tokens)
-
-    # 调试输出（可选保留）
-    print(f"[DEBUG] 搜索词 tokens (过滤后): {s_tokens}")
-    print(f"[DEBUG] 商品 tokens  (过滤后): {p_tokens}")
-    print(f"[DEBUG] bag_ratio = {bag_ratio:.2f}")
 
     # 色号辅助动态阈值
     if s_color:
@@ -678,4 +711,34 @@ if __name__ == '__main__':
     validate_product("MAC魅可 轻尤雾弹 哑光唇釉973 5ml 新版",
                      "【MAC】魅可尤雾弹唇釉新色裸色系列哑光秋冬显色口红952/996/997/973【5天内发货】")
     print()
+    validate_product("阿玛尼红气垫替换芯2#-24年",
+                     "【品牌好评106.3万+条】GIORGIO ARMANI/阿玛尼红气垫替换芯15g#2号色单双个控油持妆新款")
+    print()
+    validate_product("古驰倾色绒雾唇膏505（金色短管）",
+                     "【正品行货】Gucci古驰口红505金管绒雾哑光口红礼盒装 生日礼物")
+    print()
+    validate_product("蔻依北国雪松浓香水50ml",
+                     "【蔻依】仙境花园系列北国雪松香水150ml浓香持久留香")
+    print()
+    validate_product("资生堂男生爽肤水150ml",
+                     "【正品行货】资生堂男士活力均衡水150ml   补水保湿")
+    print()
 
+    validate_product("古驰绮梦栀子花香水50ml浓香型",
+                     "Gucci古驰绮梦馥栀女士EDP浓香水50ml 25年新品")
+    print()
+    validate_product("马来西亚进口OldTown旧街场白咖啡特浓浓醇三合一速溶白咖啡15条",
+                     "【旗舰店】旧街场马来西亚进浓醇三合一白咖啡速溶咖啡粉40条盒装")
+    print()
+    validate_product("大卫杜夫 冷水男士香水 75ml EDP 加强版",
+                     "【大卫杜夫】冷水男士香水海洋调男士淡香水男生节日礼物75ml")
+    print()
+    validate_product("圣罗兰 明彩粉光轻垫粉底液 粉气垫 #B20 CN",
+                     "【正品行货】YSL圣罗兰粉气垫12g  B10 B20 BR20遮瑕保湿持久养肤")
+    print()
+    validate_product("圣罗兰 明彩粉光轻垫粉底液 粉气垫 #B20 CN",
+                     "【正品行货】圣罗兰新明彩轻垫粉底液 20 SPF35 遮瑕轻薄透气正装")
+    print()
+    validate_product("圣罗兰 明彩粉光轻垫粉底液 粉气垫 #B20 CN",
+                     "【YSL】圣罗兰粉皮革气垫 明彩粉光轻垫粉底液气 垫 保湿持久遮瑕")
+    print()

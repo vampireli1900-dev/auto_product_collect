@@ -501,6 +501,9 @@ def collect_single_product(search_word, serial_num):
                 if res.get('name_ok', False):
                     match_pass = True
                     fail_reason = ""
+                    if not res.get('conc_ok', True):
+                        fail_reason = "浓度不匹配（规格匹配成功）"
+                        print(f"⚠️ 规格匹配成功但浓度不匹配，仍标记通过，原因已记录")
                     print(f"✅ 规格匹配成功，且品名已匹配，校验通过")
                 else:
                     match_pass = False

@@ -135,7 +135,7 @@ def extract_specs(text):
     pack_set = set()
 
     # ---------- 容量 ----------
-    cap_pattern = r'(\d+(?:\.\d+)?(?:\s*[-/]\s*\d+(?:\.\d+)?)*)\s*(ml|g|l|oz|片|粒|枚|对|支|个|盒|瓶|块|毫升|克|升)'
+    cap_pattern = r'(\d+(?:\.\d+)?(?:\s*[-/]\s*\d+(?:\.\d+)?)*)\s*(ml|g|l|oz|片|粒|枚|对|支|个|盒|瓶|块|毫升|克|升|条)'
     for match in re.finditer(cap_pattern, text):
         num_part = match.group(1)
         nums = re.findall(r'\d+\.?\d*', num_part)
@@ -251,10 +251,12 @@ def clean_title(text, brand):
             s = re.sub(re.escape(alias.lower()), '', s, flags=re.I)
 
     # 2. 去掉容量相关字符串
-    s = re.sub(r'(?:\d+[\-\/\s]*)*\d+\.?\d*\s*(ml|g|l|oz|片|粒|枚|对|支|个|盒|瓶|块|毫升|克|升)', '', s, flags=re.I)
-
+    s = re.sub(r'(?:\d+[\-\/\s]*)*\d+\.?\d*\s*(ml|g|l|oz|片|粒|枚|对|支|个|盒|瓶|块|毫升|克|升|条)', '', s, flags=re.I)
     # 4. 移除营销/噪声短语（持续可扩充）
     noise_phrases = [
+        r'绮梦',   # 删除系列名/营销词
+        r'栀',  # 删除系列名/营销词
+        r'轻垫',
         r'/\s*(支|个|件|瓶|盒|对|组)',  # 移除 /支、/个 等包装单位
         r'(新\s*)?条码',  # 移除“新条码”、“条码”
         r'效期\d{2,4}年',  # 保质期信息
@@ -267,7 +269,6 @@ def clean_title(text, brand):
         r'品牌好评[\d\.]+万\+?条',  # 品牌好评106.3万+条
         r'法国直发|进口|原装|专柜|正品|保税仓|直邮|发货',
         r'【.*?】|\[.*?\]|\(.*?\)',
-        r'女士|男士',
         r'浓香|淡香|edp|edt|edc|香水|香氛',
         r'水光|绚色|光感|自然色?\b|自然',   # “自然”可能有“自然色”，我们删除“自然色”优先
         r'奶桃|西柚|烟粉|豆沙|粉金|小粉金',
@@ -387,6 +388,11 @@ def normalize_token(tk):
         'vanilla': 'vanilla',
         # 色号词（可忽略）
         '色号': '',
+        '男生': '男士',
+        '男士': '男士',
+        '爽肤水': '爽肤水',
+        '均衡水': '爽肤水',
+        '活力均衡水': '爽肤水',
     }
     return mapping.get(tk, tk)
 
@@ -713,4 +719,26 @@ if __name__ == '__main__':
     print()
     validate_product("蔻依北国雪松浓香水50ml",
                      "【蔻依】仙境花园系列北国雪松香水150ml浓香持久留香")
+    print()
+    validate_product("资生堂男生爽肤水150ml",
+                     "【正品行货】资生堂男士活力均衡水150ml   补水保湿")
+    print()
+
+    validate_product("古驰绮梦栀子花香水50ml浓香型",
+                     "Gucci古驰绮梦馥栀女士EDP浓香水50ml 25年新品")
+    print()
+    validate_product("马来西亚进口OldTown旧街场白咖啡特浓浓醇三合一速溶白咖啡15条",
+                     "【旗舰店】旧街场马来西亚进浓醇三合一白咖啡速溶咖啡粉40条盒装")
+    print()
+    validate_product("大卫杜夫 冷水男士香水 75ml EDP 加强版",
+                     "【大卫杜夫】冷水男士香水海洋调男士淡香水男生节日礼物75ml")
+    print()
+    validate_product("圣罗兰 明彩粉光轻垫粉底液 粉气垫 #B20 CN",
+                     "【正品行货】YSL圣罗兰粉气垫12g  B10 B20 BR20遮瑕保湿持久养肤")
+    print()
+    validate_product("圣罗兰 明彩粉光轻垫粉底液 粉气垫 #B20 CN",
+                     "【正品行货】圣罗兰新明彩轻垫粉底液 20 SPF35 遮瑕轻薄透气正装")
+    print()
+    validate_product("圣罗兰 明彩粉光轻垫粉底液 粉气垫 #B20 CN",
+                     "【YSL】圣罗兰粉皮革气垫 明彩粉光轻垫粉底液气 垫 保湿持久遮瑕")
     print()

@@ -122,9 +122,23 @@ def compute_candidate_price(row):
 
 
 def select_best_record(records):
+    """
+    从同一序号的多条采集记录中选出最佳一条。
+
+    优先级规则（从高到低）：
+    1. 校验通过（已过滤）
+    2. 规格匹配优先级（匹配成功 > 空 > 匹配失败）
+    3. 是否百亿补贴（是 > 否）
+    4. 百亿补贴组内：是否有原价（有原价 > 无原价）——仅作用于百亿补贴商品
+    5. 是否有生产日期（有 > 无）
+    6. 生产日期越晚越好（降序）
+    7. 最终价格越低越好（升序）
+    """
     if records.empty:
         return None
     records = records.copy()
+
+    # 计算基准价格和最终价格（用于非百亿补贴场景）
     records['_base_price'] = records.apply(compute_candidate_price, axis=1)
     adj = records.apply(
         lambda row: adjust_price_by_quantity(row['_base_price'], row.get('关键词'), row.get('货品名称')),
@@ -132,29 +146,44 @@ def select_best_record(records):
     )
     records['_final_price'] = adj[0]
     records['_remark'] = adj[1]
+
+    # 生产日期处理
     records['_parsed_date'] = records['生产日期'].apply(parse_date)
     records['_has_date'] = records['_parsed_date'].notna()
-    records['_bai_score'] = (records['是否百亿补贴产品'].astype(str).str.strip() == '是').astype(int)
 
-    # 新增：规格匹配优先级
-    # 优先级：匹配成功(2) > 空/无规格(1) > 匹配失败(0)
+    # 百亿补贴标记
+    is_bai = (records['是否百亿补贴产品'].astype(str).str.strip() == '是')
+    records['_bai_score'] = is_bai.astype(int)
+
+    # 是否有原价（仅对百亿补贴有意义）
+    orig_price = records['原价'].apply(normalize_price)
+    records['_has_orig'] = is_bai & (~orig_price.isna())
+    records['_has_orig_score'] = records['_has_orig'].astype(int)
+
+    # 规格匹配优先级
     if '匹配规格' in records.columns:
         def match_priority(val):
             if pd.isna(val) or val == '':
-                return 1   # 空或缺失，中等优先级
+                return 1
             if '匹配失败' in str(val):
-                return 0   # 明确匹配失败，最低优先级
-            # 其余情况（如“已选: xxx”）视为匹配成功
+                return 0
             return 2
         records['_spec_priority'] = records['匹配规格'].apply(match_priority)
     else:
-        # 如果没有“匹配规格”列，则所有记录视为同一优先级
         records['_spec_priority'] = 1
 
-    # 排序：规格优先级 > 百亿补贴 > 有生产日期 > 生产日期越晚 > 价格越低
+    # 辅助列：主排序价格（百亿补贴时有原价用原价，无原价用现价；非百亿补贴用最终价格）
+    curr_price = records['现价'].apply(normalize_price)
+    records['_sort_price'] = np.where(
+        is_bai & records['_has_orig'], orig_price,
+        np.where(is_bai & ~records['_has_orig'], curr_price, records['_final_price'])
+    )
+
+    # 最终排序：规格 > 百亿补贴 > 百亿补贴内是否有原价 > 有生产日期 > 生产日期降序 > 价格升序
     records_sorted = records.sort_values(
-        by=['_spec_priority', '_bai_score', '_has_date', '_parsed_date', '_final_price'],
-        ascending=[False, False, False, False, True],
+        by=['_spec_priority', '_bai_score', '_has_orig_score',
+            '_has_date', '_parsed_date', '_sort_price'],
+        ascending=[False, False, False, False, False, True],
         na_position='last'
     )
     return records_sorted.iloc[0]
