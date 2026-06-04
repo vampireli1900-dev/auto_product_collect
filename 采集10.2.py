@@ -511,19 +511,25 @@ def collect_single_product(search_word, serial_num):
                     fail_reason = res.get("remark", "品名不匹配，规格匹配但无效")
                     print(f"⚠️ 规格匹配成功但品名不匹配，校验仍不通过")
             else:
-                # 规格匹配失败，记录失败信息
+                # 规格匹配失败，记录失败信息，并强制校验不通过
                 matched_spec = "匹配失败"
                 spec_price = ""
-                # 可选：追加原因到 fail_reason
+                # 强制校验不通过
+                match_pass = False
                 if fail_reason:
                     fail_reason += "；规格匹配失败"
                 else:
                     fail_reason = "规格匹配失败"
-                print(f"⚠️ 规格匹配未获取到有效价格，已记录为匹配失败")
+                print(f"⚠️ 规格匹配未获取到有效价格，已记录为匹配失败，校验结果强制为不通过")
             d.press("back")
             time.sleep(1)
         except Exception as e:
             print(f"❌ 规格匹配异常：{e}")
+            # 异常时强制校验不通过
+            match_pass = False
+            fail_reason = f"规格匹配异常：{e}"
+            matched_spec = "匹配失败"
+            spec_price = ""
             d.press("back")
             time.sleep(1)
 
