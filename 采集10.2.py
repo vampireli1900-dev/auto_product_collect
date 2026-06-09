@@ -27,7 +27,7 @@ detail_model = YOLO("runs/detect/product_detail_train/weights/best.pt")
 reader = easyocr.Reader(['ch_sim'], gpu=False)
 
 # ====================== 配置项 ======================
-PRODUCT_LIST_FILE = "搜索名单.xlsx"
+PRODUCT_LIST_FILE = "测试用例.xlsx"
 SEARCH_INTERVAL_SECONDS = 60
 PACKAGE_NAME = "com.xunmeng.pinduoduo"
 
@@ -192,6 +192,16 @@ def search_product(keyword):
     time.sleep(0.8)
     d(text="搜索", className="android.widget.TextView").click()
     time.sleep(3)
+
+    # 新增：检测“进店逛逛”并下滑40%屏
+    xml = d.dump_hierarchy()
+    if "进店逛逛" in xml:
+        print("⚠️ 检测到‘进店逛逛’，下滑40%屏刷新商品列表")
+        width, height = d.window_size()
+        start_y = int(height * 0.7)   # 起点Y：屏幕70%高度
+        end_y = int(height * 0.3)     # 终点Y：屏幕30%高度
+        d.swipe(width // 2, start_y, width // 2, end_y, duration=0.5)
+        time.sleep(1.5)               # 等待新内容加载
 
 def scan_list_products():
     d.screenshot("list_screen.jpg")
@@ -482,10 +492,12 @@ def collect_single_product(search_word, serial_num):
     spec_price = ""
     title_cap_nums, title_color_codes = sku_matcher.extract_specs(title)
 
-    # 触发条件：校验失败且原因含规格 或 标题容量>1 或 标题色号>1
-    if (not match_pass and any(kw in fail_reason for kw in ["规格", "色号", "容量", "浓度"])) or len(title_cap_nums) > 1 or len(title_color_codes) > 1:
-        if len(title_cap_nums) > 1:
-            print(f"🔧 标题包含多规格 {title_color_codes}，尝试进入规格面板匹配...")
+    # 判断是否为多规格（容量>1 或 色号>1）
+    multi_spec = (len(title_cap_nums) > 1 or len(title_color_codes) > 1)
+
+    if (not match_pass and any(kw in fail_reason for kw in ["规格", "色号", "容量", "浓度"])) or multi_spec:
+        if multi_spec:
+            print(f"🔧 标题包含多规格 (容量:{title_cap_nums}, 色号:{title_color_codes})，尝试进入规格面板匹配...")
         else:
             print(f"🔧 校验失败原因为规格不匹配，尝试进入规格面板匹配...")
         try:

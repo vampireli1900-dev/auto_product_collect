@@ -339,17 +339,12 @@ def _select_style_if_needed(d, timeout: float = 1.5) -> bool:
     return False
 
 def get_sku_price_auto(d, search_word: str, click_timeout: float = 2.0) -> Dict[str, Optional[str]]:
-    """自动匹配规格并返回已选规格文本和价格
-    优先级：色号 > 容量（浓度辅助过滤）> 其他标识
-    """
+    """自动匹配规格并返回已选规格文本和价格"""
     print(f"\n[DEBUG][get_sku_price_auto] 开始匹配，搜索词: '{search_word}'")
     identifiers = get_sku_identifiers(search_word)
     if not identifiers:
         print("[DEBUG][get_sku_price_auto] 未提取到任何规格标识，退出")
         return {"title": "", "current_price": None}
-
-    # 浓度词黑名单（用于识别搜索词中的浓度要求）
-    concentration_blacklist = {'edp', 'edt', 'edc', 'parfum', 'toilette', '浓香', '淡香', '古龙', '香精'}
 
     # 辅助函数：从当前页面提取已选文本和价格
     def check_current_selection(xml_content):
@@ -373,6 +368,7 @@ def get_sku_price_auto(d, search_word: str, click_timeout: float = 2.0) -> Dict[
     xml = d.dump_hierarchy()
     selected_text, price = check_current_selection(xml)
     if selected_text:
+        # 使用精确匹配函数
         matched = any(is_identifier_match(ident, selected_text) for ident in identifiers)
         if matched and price:
             print(f"[DEBUG][get_sku_price_auto] 当前已选规格匹配，价格: {price}")
@@ -388,118 +384,43 @@ def get_sku_price_auto(d, search_word: str, click_timeout: float = 2.0) -> Dict[
                 print("[DEBUG][get_sku_price_auto] 点击款式后仍无价格")
                 return {"title": selected_text, "current_price": None}
         else:
-            print("[DEBUG][get_sku_price_auto] 当前已选规格不匹配，尝试点击规格...")
+            print("[DEBUG][get_sku_price_auto] 当前已选规格不匹配，尝试点击色号...")
     else:
-        print("[DEBUG][get_sku_price_auto] 未找到已选节点，尝试点击规格...")
+        print("[DEBUG][get_sku_price_auto] 未找到已选节点，尝试点击色号...")
 
-    # 分离标识：色号、容量、其他
-    # 色号：非纯数字，且包含字母（由 extract_specs 提取的 color_codes 我们无法直接区分，用启发式）
-    def is_color_code(ident):
-        # 长度为 2~6，包含字母，不全是数字，不是容量格式（数字+ml/g等）
-        if re.match(r'\d+[a-z]+$', ident):  # 如 90ml 是容量
-            return False
-        return bool(re.search(r'[a-z]', ident)) and len(ident) >= 2
-
-    color_ids = [i for i in identifiers if is_color_code(i) and i not in concentration_blacklist]
-    cap_ids = [i for i in identifiers if re.match(r'\d+[a-z]+$', i)]
-    other_ids = [i for i in identifiers if i not in color_ids and i not in cap_ids]
-
-    # 搜索词中的浓度要求（用于辅助容量过滤）
-    search_concentration = [c for c in concentration_blacklist if c in search_word.lower()]
-
-    # 辅助函数：点击容量并支持浓度筛选
-    def try_click_capacity(cap_id):
-        elems = d(textContains=cap_id)
-        if elems.count == 0:
-            return False
-        print(f"[DEBUG] 容量 {cap_id} 找到 {elems.count} 个控件")
-        if elems.count == 1:
-            elems[0].click()
-            print(f"[DEBUG] 点击唯一容量控件: {cap_id}")
-            return True
-        else:
-            # 多个相同容量，如果有浓度要求则筛选
-            if search_concentration:
-                for elem in elems:
-                    text = elem.info.get('text', '').lower()
-                    if any(conc in text for conc in search_concentration):
-                        elem.click()
-                        print(f"[DEBUG] 点击符合浓度 {search_concentration} 的容量控件: {text}")
-                        return True
-                # 无匹配浓度，点击第一个
-                elems[0].click()
-                print(f"[DEBUG] 无匹配浓度，点击第一个容量控件: {cap_id}")
-                return True
-            else:
-                # 无浓度要求，点击第一个
-                elems[0].click()
-                print(f"[DEBUG] 多个容量无浓度要求，点击第一个: {cap_id}")
-                return True
-
-    # 第二步：按优先级点击
-    # 2.1 优先尝试色号
-    for color_id in color_ids:
-        if _click_sku_by_identifier(d, color_id, click_timeout):
-            time.sleep(0.8)
-            xml = d.dump_hierarchy()
-            sel_text, price_val = check_current_selection(xml)
-            if sel_text and price_val:
-                # 验证点击后的已选包含该色号（或任意标识）
-                if color_id in sel_text.lower():
-                    print(f"[DEBUG] 色号 {color_id} 匹配成功，价格: {price_val}")
-                    return {"title": sel_text, "current_price": price_val}
-            # 如果有已选但无价格，尝试款式
-            if sel_text and not price_val:
-                _select_style_if_needed(d, 0.5)
-                xml2 = d.dump_hierarchy()
-                _, price2 = check_current_selection(xml2)
-                if price2:
-                    return {"title": sel_text, "current_price": price2}
-            # 否则继续下一个色号
-        time.sleep(0.3)
-
-    # 2.2 色号失败，尝试容量（支持浓度辅助）
-    for cap_id in cap_ids:
-        if try_click_capacity(cap_id):
-            time.sleep(click_timeout)
-            xml = d.dump_hierarchy()
-            sel_text, price_val = check_current_selection(xml)
-            if sel_text and price_val:
-                # 可选：验证已选文本包含容量
-                if cap_id in sel_text.lower():
-                    print(f"[DEBUG] 容量 {cap_id} 匹配成功，价格: {price_val}")
-                    return {"title": sel_text, "current_price": price_val}
-                else:
-                    return {"title": sel_text, "current_price": price_val}
-            # 有已选无价格，尝试款式
-            if sel_text and not price_val:
-                _select_style_if_needed(d, 0.5)
-                xml2 = d.dump_hierarchy()
-                _, price2 = check_current_selection(xml2)
-                if price2:
-                    return {"title": sel_text, "current_price": price2}
-        time.sleep(0.3)
-
-    # 2.3 最后尝试其他标识（英文名等）
-    for ident in other_ids:
+    # 第二步：点击色号/容量标识
+    non_cap = [i for i in identifiers if not re.match(r'\d+[a-z]+$', i)]
+    cap = [i for i in identifiers if re.match(r'\d+[a-z]+$', i)]
+    for ident in non_cap + cap:
         if _click_sku_by_identifier(d, ident, click_timeout):
             time.sleep(0.8)
             xml = d.dump_hierarchy()
-            sel_text, price_val = check_current_selection(xml)
-            if sel_text and price_val:
-                if ident in sel_text.lower():
-                    print(f"[DEBUG] 其他标识 {ident} 匹配成功，价格: {price_val}")
-                    return {"title": sel_text, "current_price": price_val}
-            if sel_text and not price_val:
+            selected_text, price = check_current_selection(xml)
+            if selected_text and price:
+                # 检查点击后的已选是否包含该标识（或任意标识）
+                if ident.lower() in selected_text.lower():
+                    print(f"[DEBUG][get_sku_price_auto] 点击标识 {ident} 后匹配成功，价格: {price}")
+                    return {"title": selected_text, "current_price": price}
+                else:
+                    for id2 in identifiers:
+                        if id2.lower() in selected_text.lower():
+                            print(f"[DEBUG][get_sku_price_auto] 点击 {ident} 后已选包含 {id2}，价格: {price}")
+                            return {"title": selected_text, "current_price": price}
+            # 如果有已选文本但无价格，尝试款式
+            if selected_text and not price:
+                print(f"[DEBUG][get_sku_price_auto] 点击 {ident} 后有已选但无价格，尝试款式...")
                 _select_style_if_needed(d, 0.5)
                 xml2 = d.dump_hierarchy()
                 _, price2 = check_current_selection(xml2)
                 if price2:
-                    return {"title": sel_text, "current_price": price2}
-        time.sleep(0.3)
-
+                    return {"title": selected_text, "current_price": price2}
+                else:
+                    # 款式点击后仍无价格，继续下一个标识
+                    pass
+            # 如果没有已选节点，继续下一个标识
     print("[DEBUG][get_sku_price_auto] 所有标识尝试完毕，仍无价格")
     return {"title": "匹配失败", "current_price": None}
+
 
 
 
