@@ -234,6 +234,37 @@ def _click_sku_by_identifier(d, identifier: str, timeout: float = 2.0) -> bool:
         print(f"[DEBUG][_click_sku_by_identifier] 容量标识 {identifier} 未找到匹配控件")
         return False
 
+    # --- 纯数字标识特殊处理（避免 textContains 漏匹配）---
+    if identifier.isdigit():
+        # 1. XPath 直接匹配 text 包含该数字且可点击的节点
+        xpath_clickable = f'//*[contains(@text, "{identifier}") and @clickable="true"]'
+        elem = d.xpath(xpath_clickable)
+        if elem.exists:
+            print(f"[DEBUG][_click_sku_by_identifier] XPath 可点击匹配成功: {elem.get().attrib.get('text', '')}")
+            elem.click()
+            time.sleep(timeout)
+            return True
+
+        # 2. 兜底：任意 text 包含该数字的节点
+        xpath_any = f'//*[contains(@text, "{identifier}")]'
+        elem_any = d.xpath(xpath_any)
+        if elem_any.exists:
+            print(f"[DEBUG][_click_sku_by_identifier] XPath 任意节点匹配成功: {elem_any.get().attrib.get('text', '')}")
+            elem_any.click()
+            time.sleep(timeout)
+            return True
+
+        # 3. 最后尝试原有的 ignoreCase 匹配（针对特殊场景）
+        try:
+            elems = d(textContains=identifier, ignoreCase=True)
+            if elems.count > 0:
+                elems[0].click()
+                time.sleep(timeout)
+                return True
+        except:
+            pass
+        return False
+
     # 非容量标识：原有逻辑
     brand_set = _get_brand_aliases_lower()
     words = identifier.split()
@@ -470,7 +501,8 @@ def get_sku_price_auto(d, search_word: str, click_timeout: float = 2.0) -> Dict[
                     print(f"[DEBUG] 容量 {cap_id} 匹配成功，价格: {price_val}")
                     return {"title": sel_text, "current_price": price_val}
                 else:
-                    return {"title": sel_text, "current_price": price_val}
+                    print(f"[DEBUG] 点击容量 {cap_id} 后已选文本为 {sel_text}，不包含目标容量，放弃")
+                    continue  # 继续尝试下一个容量
             # 有已选无价格，尝试款式
             if sel_text and not price_val:
                 _select_style_if_needed(d, 0.5)
@@ -507,7 +539,7 @@ def get_sku_price_auto(d, search_word: str, click_timeout: float = 2.0) -> Dict[
 d = u2.connect()
 # ====================== 调试运行 ======================
 if __name__ == '__main__':
-    result2 = get_sku_price_auto(d, '巴宝莉 我的巴宝莉黑色EDP 90ml')
+    result2 = get_sku_price_auto(d, '黛珂散粉光肌00 24年新版')
     print("\n===== 结果2 =====")
     print("匹配文本:", result2["title"])
     print("价格:", result2["current_price"])

@@ -15,12 +15,6 @@ def fuzzy_contains_no_stop(core, target):
     pattern = '.*?'.join(re.escape(ch) for ch in filtered)
     return re.search(pattern, target) is not None
 
-
-
-
-
-
-
 def match_brand(text):
     """品牌匹配，返回标准品牌名，未匹配返回'未匹配'。优先匹配最长的别名。"""
     txt = str(text).lower()
@@ -72,7 +66,7 @@ def clean_title(text, brand):
         r'浓香|淡香|edp|edt|edc|香水|香氛',
         r'水光|绚色|光感|自然色?\b|自然',   # “自然”可能有“自然色”，我们删除“自然色”优先
         r'奶桃|西柚|烟粉|豆沙|粉金|小粉金',
-        r'磨皮|持妆|服帖|亲妈',          # 已有部分可能重复，无妨
+        r'磨皮|服帖|亲妈',          # 已有部分可能重复，无妨
         r'精华|修护|滋润|保湿|遮瑕|持久|焕亮|柔滑|控油|清爽|温和|清透',
         r'版|款|型',
         r'馥郁|浓情|淡雅|清新',
@@ -193,6 +187,9 @@ def normalize_token(tk):
         '爽肤水': '爽肤水',
         '均衡水': '爽肤水',
         '活力均衡水': '爽肤水',
+        '酒渍樱桃色': 'insatiable',
+        '液体腮红': '腮红',
+        '流体腮红': '腮红',
     }
     return mapping.get(tk, tk)
 
@@ -235,7 +232,43 @@ def lcs_substring_length(a, b):
                 dp[i][j] = 0
     return max_len
 
-# ====================== 核心校验函数 ======================
+def apply_manual_overrides(search_word, product_title, result):
+    """
+    手动覆盖校验结果，处理通用逻辑无法正确判断的特例。
+    参数：
+        search_word: 搜索词
+        product_title: 商品标题
+        result: 包含 final, remark, name_ok, spec_ok 等字段的字典
+    返回：
+        修改后的 result 字典（会直接修改原字典，并返回）
+    """
+    # 规则1：兰蔻养肤水粉底液 vs 持妆粉底液 → 不通过
+    if "养肤" in search_word and "持妆" in product_title:
+        result['remark'] = "单例规则：'养肤'与'持妆'不符，品名不匹配"
+        result['name_ok'] = False
+        print("⚠️ 单例规则命中：兰蔻养肤水 vs 持妆")
+        return result
+
+    if "MAC 丝柔哑光唇膏" in search_word and "子弹头" in product_title:
+
+        result['remark'] = "单例规则：子弹头强制通过"
+        result['name_ok'] = True
+        print("⚠️ 单例规则命中：子弹头强制通过")
+        return result
+    # 可以继续添加其他规则...
+    if "小黑瓶眼霜" in search_word and "黑金臻宠眼霜" in product_title:
+        result['name_ok'] = False
+        extra = "单例规则：小黑瓶与黑金臻宠不符，品名不匹配"
+        original = result.get('remark', '')
+        if original and original != "通过":
+            result['remark'] = f"{original}（{extra}）"
+        else:
+            result['remark'] = extra
+        print("⚠️ 单例规则命中：兰蔻小黑瓶眼霜 vs 黑金臻宠，强制不通过")
+        return result
+
+    return result
+
 def validate_product(
     search_word,
     product_title,
@@ -256,17 +289,17 @@ def validate_product(
     p_simple = extract_simple_pack(product_title)
     simple_ok = (s_simple == p_simple) if s_simple and p_simple else True
 
-    # 容量检查：搜索有容量时，要求是商品容量的子集
+    # 容量检查
     if s_cap:
         cap_ok = s_cap.issubset(p_cap)
     else:
         cap_ok = True
 
-    # 色号检查结果（搜索色号是否全部出现在商品文本中）
+    # 色号检查
     product_lower = product_title.lower()
     color_ok = all(code in product_lower for code in s_color)
 
-    # 特殊规则：如果双方都有色号且色号匹配成功，则容量检查不再强制要求
+    # 规格综合判断
     if s_color and p_color and color_ok:
         spec_ok = True
     else:
@@ -277,18 +310,15 @@ def validate_product(
     p_clean = clean_title(product_title, p_brand)
 
     # 4. 品名匹配（词袋优先）
-    # --- 原始 tokens ---
     s_tokens_raw = [normalize_token(t) for t in tokenize(s_clean)]
     p_tokens_raw = [normalize_token(t) for t in tokenize(p_clean)]
 
-    # 纯中文 token 过滤（至少包含一个汉字）
     def is_chinese_token(tk):
         return bool(re.search(r'[\u4e00-\u9fff]', tk))
 
     s_cn_tokens = [t for t in s_tokens_raw if is_chinese_token(t)]
     p_cn_tokens = [t for t in p_tokens_raw if is_chinese_token(t)]
 
-    # 若双方都有中文 token，则用中文 token 计算；否则回退到原始 token
     if s_cn_tokens and p_cn_tokens:
         s_tokens = s_cn_tokens
         p_tokens = p_cn_tokens
@@ -297,12 +327,7 @@ def validate_product(
         p_tokens = p_tokens_raw
 
     bag_ratio = word_bag_ratio(s_tokens, p_tokens)
-
-    # 色号辅助动态阈值
-    if s_color:
-        threshold = 0.3
-    else:
-        threshold = 0.3
+    threshold = 0.3
     bag_ok = bag_ratio >= threshold
 
     if bag_ok:
@@ -325,24 +350,45 @@ def validate_product(
             ratio = 1.0
         name_ok = ratio >= 0.3
         method = f'LCS子序列({ratio:.1%})'
+
+    # ------------------- 单例规则（仅修改 name_ok 和追加 remark）-------------------
+    # 构造原始 remark（不含单例）
+    reasons = []
+    if not brand_ok: reasons.append("品牌不一致")
+    if not spec_ok: reasons.append("规格不匹配")
+    if not conc_ok: reasons.append("浓度不匹配")
+    if not simple_ok: reasons.append("简装不匹配")
+    if not name_ok: reasons.append(f"品名相似不足(ratio={ratio:.1%})")
+    original_remark = '；'.join(reasons) if reasons else "通过"
+
+    temp = {'name_ok': name_ok, 'remark': original_remark}
+    temp = apply_manual_overrides(search_word, product_title, temp)
+    name_ok = temp['name_ok']
+    remark = temp['remark']
+    # ---------------------------------------------------------------------
+
+    # 最终校验
     final = brand_ok and spec_ok and conc_ok and simple_ok and name_ok
 
+    # 构造输出原因
     if final:
-        reason_tail = "所有检查通过"
+        if remark and remark != "通过":
+            reason_tail = remark
+        else:
+            reason_tail = "所有检查通过"
     else:
         reasons_dbg = []
-        if not brand_ok:
-            reasons_dbg.append("品牌不一致")
-        if not spec_ok:
-            reasons_dbg.append("规格不匹配")
-        if not conc_ok:
-            reasons_dbg.append("浓度不匹配")
-        if not simple_ok:
-            reasons_dbg.append("简装不匹配")
-        if not name_ok:
-            reasons_dbg.append(f"品名相似不足(ratio={ratio:.1%})")
+        if not brand_ok: reasons_dbg.append("品牌不一致")
+        if not spec_ok: reasons_dbg.append("规格不匹配")
+        if not conc_ok: reasons_dbg.append("浓度不匹配")
+        if not simple_ok: reasons_dbg.append("简装不匹配")
+        if not name_ok: reasons_dbg.append(f"品名相似不足(ratio={ratio:.1%})")
         reason_tail = "；".join(reasons_dbg)
+        # 附加单例说明（如果有）
+        if remark and remark != "通过" and remark != original_remark:
+            reason_tail += f"（{remark}）"
 
+    # 输出
     lines_out = [
         "=" * 60,
         f"搜索词 ：{search_word}",
@@ -361,13 +407,6 @@ def validate_product(
         trace_lines.extend(lines_out)
     for ln in lines_out:
         print(ln)
-    reasons = []
-    if not brand_ok: reasons.append('品牌不一致')
-    if not spec_ok: reasons.append('规格不匹配')
-    if not conc_ok: reasons.append('浓度不匹配')
-    if not simple_ok: reasons.append('简装不匹配')
-    if not name_ok: reasons.append(f'品名相似不足(ratio={ratio:.1%})')
-    remark = '；'.join(reasons) if reasons else '通过'
 
     return {
         'final': final,
@@ -389,7 +428,6 @@ def validate_product(
         'ratio': ratio,
         'remark': remark,
     }
-
 # ====================== 测试用例 ======================
 if __name__ == '__main__':
     # 案例1：之前失败的兰蔻是我
@@ -547,4 +585,19 @@ if __name__ == '__main__':
     print()
     validate_product("SK-II前男友面膜10片装",
                      "【SK-II】前男友面膜贴片面膜单片*10组合保湿补水修复抗衰老美白【5天内发货】")
+    print()
+    validate_product("兰蔻养肤水粉底液 PO-01 30ml",
+                     "【正品行货】兰蔻新款持妆粉底液30ml PO-01")
+    print()
+    validate_product("NARS液体腮红 INSATIABLE",
+                     "【正品行货】NARS小粉金流体腮红水光绚色流体腮红酒渍樱桃色7ml")
+    print()
+    validate_product("NARS多用腮红棒欲焰HOT TAKE 8G",
+                     "【NARS】娜斯新品柔滑多功能棒腮红棒眼颊唇三用swing,sex appeal 8g")
+    print()
+    validate_product("MAC 丝柔哑光唇膏 #669 WARM TEDDY 暖萌泰迪",
+                     "【MAC】魅可大子弹头口红唇膏显色显白#602 大辣椒")
+    print()
+    validate_product("兰蔻小黑瓶眼霜15ml",
+                     "Lancome 兰蔻 黑金臻宠眼霜 15ml")
     print()

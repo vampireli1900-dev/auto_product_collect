@@ -27,7 +27,7 @@ detail_model = YOLO("runs/detect/product_detail_train/weights/best.pt")
 reader = easyocr.Reader(['ch_sim'], gpu=False)
 
 # ====================== 配置项 ======================
-PRODUCT_LIST_FILE = "测试用例.xlsx"
+PRODUCT_LIST_FILE = "搜索名单.xlsx"
 SEARCH_INTERVAL_SECONDS = 60
 PACKAGE_NAME = "com.xunmeng.pinduoduo"
 
@@ -195,8 +195,8 @@ def search_product(keyword):
 
     # 新增：检测“进店逛逛”并下滑40%屏
     xml = d.dump_hierarchy()
-    if "进店逛逛" in xml:
-        print("⚠️ 检测到‘进店逛逛’，下滑40%屏刷新商品列表")
+    if "进店" in xml:
+        print("⚠️ 检测到‘进店’，下滑40%屏刷新商品列表")
         width, height = d.window_size()
         start_y = int(height * 0.7)   # 起点Y：屏幕70%高度
         end_y = int(height * 0.3)     # 终点Y：屏幕30%高度
@@ -432,7 +432,18 @@ def extract_product_info(xml_content: str, search_word: str):
         "current_price": current_price,
     }
 
-def find_and_click_detail(max_scroll=7):
+def find_and_click_detail(max_scroll=7, max_retry_after_click=1):
+    """
+    找到并点击“商品详情”入口，进入详情页后尝试滑动查找生产日期
+
+    参数:
+        max_scroll: 在列表页寻找“商品详情”按钮时的最大滑动次数
+        max_retry_after_click: 进入详情页后，未立即看到生产日期时的向上滑动重试次数
+
+    返回:
+        bool: 是否成功找到生产日期
+    """
+    # ---------- 第一步：找到并点击“商品详情”按钮 ----------
     for _ in range(max_scroll):
         img = d.screenshot(format="opencv")
         res = detail_model(img, conf=0.75)
@@ -453,25 +464,45 @@ def find_and_click_detail(max_scroll=7):
                 cy = (y1 + y2) // 2
                 d.click(cx, cy)
                 time.sleep(1.5)
-                if "生产日期" in d.dump_hierarchy():
-                    return True
-                else:
-                    d.press("back")
-                    return False
-        width, height = d.window_size()
-        # 原固定坐标：(500,1800)→(500,600) 向上拖
-        d.drag(
-            int(width * 0.46),
-            int(height * 0.75),
-            int(width * 0.46),
-            int(height * 0.25),
-            0.25
-        )
-        time.sleep(0.8)
+                if "商品参数"  not in d.dump_hierarchy():
+                    continue
+                break  # 成功点击，跳出寻找循环
+        else:
+            # 没找到“商品详情”，滑动列表页继续找
+            width, height = d.window_size()
+            d.drag(
+                int(width * 0.46),
+                int(height * 0.75),
+                int(width * 0.46),
+                int(height * 0.25),
+                0.25
+            )
+            time.sleep(0.8)
+    else:
+        return False
+
+    # ---------- 第二步：进入详情页后，滑动查找生产日期 ----------
+    if "生产日期" in d.dump_hierarchy():
+        return True
+
+    width, height = d.window_size()
+    for attempt in range(max_retry_after_click):
+        # 滑动区域：屏幕下部80% → 40%（向上滑动，让下方内容上移）
+        start_y = int(height * 0.8)
+        end_y = int(height * 0.4)
+        d.drag(width // 2, start_y, width // 2, end_y, duration=0.3)
+        time.sleep(0.8)  # 等待页面加载
+        if "生产日期" in d.dump_hierarchy():
+            return True
+    d.press("back")   # 没找到就退回上一页
     return False
 
 def get_date_with_retry():
-    m = re.search(r'text="(\d{4}-\d{1,2}-\d{1,2})"', d.dump_hierarchy())
+    """
+    仅从当前界面直接提取日期（不再滑动，因为滑动已在 find_and_click_detail 中完成）
+    """
+    hierarchy = d.dump_hierarchy()
+    m = re.search(r'text="(\d{4}-\d{1,2}-\d{1,2})"', hierarchy)
     return m.group(1) if m else ""
 
 def collect_single_product(search_word, serial_num):
@@ -600,6 +631,7 @@ def ensure_back_to_list(d):
     try:
         if d(textContains="放弃优惠").exists or d(textContains="继续退出").exists:
             print("⚠️ 检测到优惠券弹窗，再次返回")
+            d.press("back")
             d.press("back")
             time.sleep(0.5)
     except Exception as e:
