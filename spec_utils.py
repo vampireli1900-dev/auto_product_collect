@@ -213,4 +213,13 @@ def extract_specs(text):
 
     color_codes = {c for c in color_codes if not re.search(r'(ml|g|oz|升|毫升)$', c.lower())}
     cap_nums.update(pack_set)
-    return cap_nums, color_codes
+    # ========== 新增：过滤品牌别名 ==========
+    # 构建品牌别名集合（小写）
+    brand_aliases_lower = set()
+    for aliases in brand_lib.values():
+        for a in aliases:
+            brand_aliases_lower.add(a.lower())
+    # 过滤色号：剔除属于品牌别名的
+    filtered_color_codes = {c for c in color_codes if c.lower() not in brand_aliases_lower}
+
+    return cap_nums, filtered_color_codes

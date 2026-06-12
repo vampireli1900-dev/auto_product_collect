@@ -44,8 +44,15 @@ def get_sku_identifiers(search_word: str) -> list:
 
     # 3. 拆分色号（从 extract_specs 获取）
     _, color_codes = extract_specs(search_word)
+    brand_set = _get_brand_aliases_lower()
+    filtered_colors = []
+
     for c in color_codes:
         cl = c.lower()
+        if cl in brand_set:
+            continue  # 跳过品牌别名
+        # 额外排除像 "sk2" 这种纯品牌简写
+        filtered_colors.append(cl)
         if cl in seen:
             continue
         if re.fullmatch(r'\d+', cl) and len(cl) == 4 and 1900 < int(cl) < 2100:

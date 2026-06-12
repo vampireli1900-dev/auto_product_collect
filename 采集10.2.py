@@ -467,6 +467,17 @@ def find_and_click_detail(max_scroll=7, max_retry_after_click=1):
                 if "商品参数"  not in d.dump_hierarchy():
                     continue
                 break  # 成功点击，跳出寻找循环
+            else:
+                # 检测到框，但无「商品详情」文字，滑动页面
+                width, height = d.window_size()
+                d.drag(
+                    int(width * 0.46),
+                    int(height * 0.75),
+                    int(width * 0.46),
+                    int(height * 0.25),
+                    0.25
+                )
+                time.sleep(0.8)
         else:
             # 没找到“商品详情”，滑动列表页继续找
             width, height = d.window_size()
