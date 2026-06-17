@@ -27,7 +27,7 @@ detail_model = YOLO("runs/detect/product_detail_train/weights/best.pt")
 reader = easyocr.Reader(['ch_sim'], gpu=False)
 
 # ====================== 配置项 ======================
-PRODUCT_LIST_FILE = "搜索名单.xlsx"
+PRODUCT_LIST_FILE = "复采名单.xlsx"
 SEARCH_INTERVAL_SECONDS = 60
 PACKAGE_NAME = "com.xunmeng.pinduoduo"
 
@@ -643,6 +643,7 @@ def ensure_back_to_list(d):
         if d(textContains="放弃优惠").exists or d(textContains="继续退出").exists:
             print("⚠️ 检测到优惠券弹窗，再次返回")
             d.press("back")
+            time.sleep(0.5)
             d.press("back")
             time.sleep(0.5)
     except Exception as e:

@@ -118,15 +118,19 @@ def fuzzy_contains(core, text):
     return re.search(pattern, text) is not None
 
 def tokenize(text):
-    """分词：英文单词｜连续2-4字的中文短语（重叠提取，去重）"""
-    # 英文单词
-    eng_words = re.findall(r'[a-zA-Z]{2,}', text.lower())   # 至少2个字母，避免无意义单字
-    # 中文短语：利用正向预扫描，提取所有长度2-4的子串，后面会去重
-    chinese = re.findall(r'[\u4e00-\u9fff]{2,4}', text)
-    # 合并去重，保留顺序
+    """提取所有英文单词（≥2字母），以及所有中文连续2~4字的滑动窗口片段（重叠）"""
+    eng_words = re.findall(r'[a-zA-Z]{2,}', text.lower())
+    # 提取所有中文2~4字的滑动窗口片段
+    chinese_chars = re.findall(r'[\u4e00-\u9fff]', text)
+    chinese_tokens = []
+    for i in range(len(chinese_chars)):
+        for length in range(2, min(5, len(chinese_chars) - i + 1)):
+            token = ''.join(chinese_chars[i:i+length])
+            chinese_tokens.append(token)
+    # 去重并保持顺序（英文在前，中文在后）
     seen = set()
     tokens = []
-    for t in eng_words + chinese:
+    for t in eng_words + chinese_tokens:
         if t not in seen:
             seen.add(t)
             tokens.append(t)
@@ -190,6 +194,8 @@ def normalize_token(tk):
         '酒渍樱桃色': 'insatiable',
         '液体腮红': '腮红',
         '流体腮红': '腮红',
+        '蜜粉': '散粉',
+        '散粉': '散粉',
     }
     return mapping.get(tk, tk)
 
@@ -267,6 +273,16 @@ def apply_manual_overrides(search_word, product_title, result):
         print("⚠️ 单例规则命中：兰蔻小黑瓶眼霜 vs 黑金臻宠，强制不通过")
         return result
 
+    if "澳洲檀木" in search_word:
+        if "檀" not in product_title and "檀木" not in product_title:
+            result['name_ok'] = False
+            extra = "单例规则：搜索词含澳洲檀木，标题未提及檀木/檀香，品名不匹配"
+            original = result.get('remark', '')
+            if original and original != "通过":
+                result['remark'] = f"{original}（{extra}）"
+            else:
+                result['remark'] = extra
+            print("⚠️ 单例规则命中：澳洲檀木未匹配")
     return result
 
 def validate_product(
@@ -299,11 +315,32 @@ def validate_product(
     product_lower = product_title.lower()
     color_ok = all(code in product_lower for code in s_color)
 
-    # 规格综合判断
-    if s_color and p_color and color_ok:
-        spec_ok = True
+    # ---------- 新增：计数单位特殊处理 ----------
+    COUNT_UNITS = {'粒', '片', '颗'}
+
+    def extract_count_capacity(text):
+        """提取数字+计数单位，返回集合如 {'300粒', '180粒'}"""
+        pattern = r'(\d+)\s*(' + '|'.join(COUNT_UNITS) + ')'
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        return {f"{num}{unit}" for num, unit in matches}
+
+    s_count_caps = extract_count_capacity(search_word)
+    p_count_caps = extract_count_capacity(product_title)
+
+    if s_count_caps:
+        # 搜索词含有计数单位 → 必须容量严格匹配（数字+单位）
+        count_ok = s_count_caps.issubset(p_count_caps)
+        if not count_ok:
+            spec_ok = False
+        else:
+            # 容量匹配后，仍需检查色号
+            spec_ok = color_ok
     else:
-        spec_ok = cap_ok and color_ok
+        # 无计数单位 → 保留原有逻辑（色号优先）
+        if s_color and p_color and color_ok:
+            spec_ok = True
+        else:
+            spec_ok = cap_ok and color_ok
 
     # 3. 品名清洗
     s_clean = clean_title(search_word, s_brand)
@@ -326,9 +363,32 @@ def validate_product(
         s_tokens = s_tokens_raw
         p_tokens = p_tokens_raw
 
+    # 过滤 token：仅保留中文长度为 2 或英文长度 ≥2 的 token
+    s_tokens = [t for t in s_tokens if (len(t) == 2 and re.search(r'[\u4e00-\u9fff]', t)) or (
+                not re.search(r'[\u4e00-\u9fff]', t) and len(t) >= 2)]
+    p_tokens = [t for t in p_tokens if (len(t) == 2 and re.search(r'[\u4e00-\u9fff]', t)) or (
+                not re.search(r'[\u4e00-\u9fff]', t) and len(t) >= 2)]
     bag_ratio = word_bag_ratio(s_tokens, p_tokens)
-    threshold = 0.3
+    threshold = 0.30
     bag_ok = bag_ratio >= threshold
+    # 调试打印
+    # print(f"[DEBUG] s_tokens: {s_tokens}")
+    # print(f"[DEBUG] p_tokens: {p_tokens}")
+    # print(f"[DEBUG] bag_ratio: {bag_ratio:.2%}  (阈值: {threshold:.0%})")
+    # print(f"[DEBUG] bag_ok: {bag_ok}")
+    # 若匹配率在0.20~0.25之间，但核心品类词匹配，则额外通过
+    if not bag_ok and 0.20 <= bag_ratio < threshold:
+        # 定义核心品类词（可扩充）
+        CORE = {'散粉', '蜜粉', '气垫',   '唇膏'}
+        s_set = set(s_tokens)
+        p_set = set(p_tokens)
+        if any(w in s_set and w in p_set for w in CORE):
+            bag_ok = True
+            method = f'词袋({bag_ratio:.1%}+核心词匹配)'
+        else:
+            method = f'词袋({bag_ratio:.1%})'
+    else:
+        method = f'词袋({bag_ratio:.1%})'
 
     if bag_ok:
         name_ok = True
@@ -600,4 +660,16 @@ if __name__ == '__main__':
     print()
     validate_product("兰蔻小黑瓶眼霜15ml",
                      "Lancome 兰蔻 黑金臻宠眼霜 15ml")
+    print()
+    validate_product("伟博天然氨糖D3维骨力胶囊300粒",
+                     "加拿大伟博硫酸氨糖软骨素中老年成人维骨力D3关节健康180粒【5天内发货】")
+    print()
+    validate_product("罗拉散粉经典款29G",
+                     "【8.7万人收藏该品牌】LAURA MERCIER/罗拉玛斯亚 柔光透明蜜粉罗拉29g定妆")
+    print()
+    validate_product("拉夫劳伦地球系列香氛 澳洲檀木 100ml",
+                     "【Ralph Lauren】拉夫劳伦 地球系列淡香水EDT男女100ml清新持久【5天内发货】")
+    print()
+    validate_product("YSL圣罗兰皮气垫新明彩亮润轻垫粉底液 #B20",
+                     "【正品行货】YSL圣罗兰粉气垫12g  B10 B20 BR20遮瑕保湿持久养肤")
     print()

@@ -55,7 +55,7 @@ def get_sku_identifiers(search_word: str) -> list:
         filtered_colors.append(cl)
         if cl in seen:
             continue
-        if re.fullmatch(r'\d+', cl) and len(cl) == 4 and 1900 < int(cl) < 2100:
+        if re.fullmatch(r'\d+', cl) and len(cl) == 4 and 2000 < int(cl) < 2100:
             continue
         seen.add(cl)
         identifiers.append(cl)
@@ -243,31 +243,60 @@ def _click_sku_by_identifier(d, identifier: str, timeout: float = 2.0) -> bool:
 
     # --- 纯数字标识特殊处理（避免 textContains 漏匹配）---
     if identifier.isdigit():
-        # 1. XPath 直接匹配 text 包含该数字且可点击的节点
+        # 定义过滤函数：检查文本是否为有效的规格候选
+        def is_valid_spec_text(text):
+            if not text:
+                return False
+            # 长度过长（超过20个字符）大概率不是规格
+            if len(text) > 20:
+                return False
+            # 包含地址关键词 → 跳过
+            addr_keywords = ['路', '号', '铺', '城', '区', '街', '楼', '室', '栋', '单元', '村', '巷', '道', '门', '牌', '广场', '商业', '中心']
+            if any(kw in text for kw in addr_keywords):
+                return False
+            # 包含营销/无关词 → 跳过
+            noise = ['快递', '邮费', '运费',  ]
+            if any(kw in text for kw in noise):
+                return False
+            # 允许纯数字（长度≤5）或数字+少量字母（如 1A, 02B）
+            if re.match(r'^[0-9a-zA-Z]+$', text) and len(text) <= 6:
+                return True
+            # 如果文本完全等于标识，直接放行（更严格）
+            if text.strip() == identifier:
+                return True
+            return False
+
+        # 1. XPath 可点击节点，且文本通过过滤
         xpath_clickable = f'//*[contains(@text, "{identifier}") and @clickable="true"]'
-        elem = d.xpath(xpath_clickable)
-        if elem.exists:
-            print(f"[DEBUG][_click_sku_by_identifier] XPath 可点击匹配成功: {elem.get().attrib.get('text', '')}")
-            elem.click()
-            time.sleep(timeout)
-            return True
-
-        # 2. 兜底：任意 text 包含该数字的节点
-        xpath_any = f'//*[contains(@text, "{identifier}")]'
-        elem_any = d.xpath(xpath_any)
-        if elem_any.exists:
-            print(f"[DEBUG][_click_sku_by_identifier] XPath 任意节点匹配成功: {elem_any.get().attrib.get('text', '')}")
-            elem_any.click()
-            time.sleep(timeout)
-            return True
-
-        # 3. 最后尝试原有的 ignoreCase 匹配（针对特殊场景）
-        try:
-            elems = d(textContains=identifier, ignoreCase=True)
-            if elems.count > 0:
-                elems[0].click()
+        elems = d.xpath(xpath_clickable).all()
+        for elem in elems:
+            text = elem.attrib.get('text', '')
+            if is_valid_spec_text(text):
+                print(f"[DEBUG][_click_sku_by_identifier] 点击有效规格(可点击): {text}")
+                elem.click()
                 time.sleep(timeout)
                 return True
+
+        # 2. 兜底：任意包含该数字的节点，同样过滤
+        xpath_any = f'//*[contains(@text, "{identifier}")]'
+        elems_any = d.xpath(xpath_any).all()
+        for elem in elems_any:
+            text = elem.attrib.get('text', '')
+            if is_valid_spec_text(text):
+                print(f"[DEBUG][_click_sku_by_identifier] 点击有效规格(任意): {text}")
+                elem.click()
+                time.sleep(timeout)
+                return True
+
+        # 3. 最后尝试原有的 ignoreCase 匹配（同样过滤）
+        try:
+            elems = d(textContains=identifier, ignoreCase=True)
+            for elem in elems:
+                text = elem.info.get('text', '')
+                if is_valid_spec_text(text):
+                    elem.click()
+                    time.sleep(timeout)
+                    return True
         except:
             pass
         return False
@@ -546,7 +575,7 @@ def get_sku_price_auto(d, search_word: str, click_timeout: float = 2.0) -> Dict[
 d = u2.connect()
 # ====================== 调试运行 ======================
 if __name__ == '__main__':
-    result2 = get_sku_price_auto(d, '黛珂散粉光肌00 24年新版')
+    result2 = get_sku_price_auto(d, 'YSL圣罗兰黑金方管1968')
     print("\n===== 结果2 =====")
     print("匹配文本:", result2["title"])
     print("价格:", result2["current_price"])
