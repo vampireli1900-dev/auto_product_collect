@@ -530,6 +530,10 @@ def collect_single_product(search_word, serial_num):
     match_pass = res['final']
     fail_reason = "" if match_pass else res.get("remark", "校验未通过")
 
+    # 获取生产日期
+    detail = find_and_click_detail()
+    date = get_date_with_retry() if detail else ""
+
     matched_spec = ""
     spec_price = ""
     title_cap_nums, title_color_codes = sku_matcher.extract_specs(title)
@@ -587,9 +591,7 @@ def collect_single_product(search_word, serial_num):
             d.press("back")
             time.sleep(1)
 
-    # 获取生产日期
-    detail = find_and_click_detail()
-    date = get_date_with_retry() if detail else ""
+
 
     # 写入记录
     record_list.append([

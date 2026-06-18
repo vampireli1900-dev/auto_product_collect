@@ -283,6 +283,67 @@ def apply_manual_overrides(search_word, product_title, result):
             else:
                 result['remark'] = extra
             print("⚠️ 单例规则命中：澳洲檀木未匹配")
+
+    # ===== 规则：古驰炼金师花园系列香型必须匹配 =====
+    if "炼金" in search_word and "炼金" in product_title:
+        # 提取搜索词中的香型（位于“花园”之后，可能以“之”或“香水”分隔）
+        match_s = re.search(r'花园[：:]?\s*([^香]{2,6}?)(?:香|$)', search_word)
+        if match_s:
+            scent_s = match_s.group(1).strip()
+        else:
+            scent_s = None
+        # 提取标题中的香型（类似逻辑）
+        match_p = re.search(r'花园[：:]?\s*([^香]{2,6}?)(?:香|$)', product_title)
+        if match_p:
+            scent_p = match_p.group(1).strip()
+        else:
+            scent_p = None
+        # 如果搜索词有明确的香型，但标题中没有该香型，则否决
+        if scent_s and (not scent_p or scent_s not in product_title):
+            result['name_ok'] = False
+            extra = "单例规则：炼金师花园香型不匹配"
+            original = result.get('remark', '')
+            if original and original != "通过":
+                result['remark'] = f"{original}（{extra}）"
+            else:
+                result['remark'] = extra
+            print(f"⚠️ 单例规则命中：炼金师花园香型不一致（搜索: {scent_s}, 标题: {scent_p}）")
+
+    # ===== 规则：搜索词含 "man" 时，标题也需含 "man"（针对CK男士香水） =====
+    if "CK" in search_word and "男士" in search_word:
+        if re.search(r'(?<![a-zA-Z])man(?![a-zA-Z])', search_word, re.IGNORECASE):
+            if not re.search(r'(?<![a-zA-Z])man(?![a-zA-Z])', product_title, re.IGNORECASE):
+                result['name_ok'] = False
+                extra = "单例规则：搜索词含'Man'，标题必须含'Man'"
+                original = result.get('remark', '')
+                if original and original != "通过":
+                    result['remark'] = f"{original}（{extra}）"
+                else:
+                    result['remark'] = extra
+                print("⚠️ 单例规则命中：搜索词含Man但标题无Man，强制不通过")
+
+    # ===== 规则：资生堂悦薇系列，清爽/滋润类型必须一致 =====
+    if "悦薇" in search_word or "悦微" in search_word:  # 兼容错别字
+        # 提取搜索词中的类型（清爽/滋润）
+        s_type = None
+        if "清爽" in search_word:
+            s_type = "清爽"
+        elif "滋润" in search_word:
+            s_type = "滋润"
+        if s_type:
+            # 标题中必须包含相同类型
+            if s_type not in product_title:
+                result['name_ok'] = False
+                extra = f"单例规则：搜索词含'{s_type}'，标题必须含'{s_type}'"
+                original = result.get('remark', '')
+                if original and original != "通过":
+                    result['remark'] = f"{original}（{extra}）"
+                else:
+                    result['remark'] = extra
+                print(f"⚠️ 单例规则命中：悦薇{s_type}不一致，强制不通过")
+            else:
+                print(f"✅ 悦薇类型一致：{s_type}")
+
     return result
 
 def validate_product(
@@ -670,6 +731,9 @@ if __name__ == '__main__':
     validate_product("拉夫劳伦地球系列香氛 澳洲檀木 100ml",
                      "【Ralph Lauren】拉夫劳伦 地球系列淡香水EDT男女100ml清新持久【5天内发货】")
     print()
-    validate_product("YSL圣罗兰皮气垫新明彩亮润轻垫粉底液 #B20",
-                     "【正品行货】YSL圣罗兰粉气垫12g  B10 B20 BR20遮瑕保湿持久养肤")
+    validate_product("古驰炼金师花园狮之心香水100ML",
+                     "GUCCI/古驰炼金士花园系列香水100ML正品香氛送礼")
+    print()
+    validate_product("资生堂悦微清爽水150ml（新版）",
+                     "【正品保证】资生堂悦薇智感亮肤水150ml滋润型紧致弹润")
     print()

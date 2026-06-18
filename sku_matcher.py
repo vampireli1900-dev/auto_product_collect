@@ -104,13 +104,17 @@ def get_sku_identifiers(search_word: str) -> list:
     # 5. 容量（只添加带数字的单位，如 50ml）
     m = re.search(r'(\d+(?:\.\d+)?)\s*(ml|g|l|oz|毫升|克|升)', search_word, re.I)
     if m:
-        num = m.group(1)
+        num = float(m.group(1))  # 转为浮点数
         unit = m.group(2).lower()
         unit_map = {'毫升': 'ml', '克': 'g', '升': 'l'}
         unit = unit_map.get(unit, unit)
-        cap_id = f"{num}{unit}"
-        if cap_id not in seen:
-            identifiers.append(cap_id)
+        # 过滤小容量（例如 < 5ml/g，样品/小样通常较小）
+        if num < 2:
+            print(f"[DEBUG][get_sku_identifiers] 跳过小容量: {num}{unit}")
+        else:
+            cap_id = f"{num}{unit}"
+            if cap_id not in seen:
+                identifiers.append(cap_id)
 
 
     print(f"[DEBUG][get_sku_identifiers] 提取标识: {identifiers}")
