@@ -27,7 +27,7 @@ detail_model = YOLO("runs/detect/product_detail_train/weights/best.pt")
 reader = easyocr.Reader(['ch_sim'], gpu=False)
 
 # ====================== 配置项 ======================
-PRODUCT_LIST_FILE = "复采名单.xlsx"
+PRODUCT_LIST_FILE = "搜索名单.xlsx"
 SEARCH_INTERVAL_SECONDS = 60
 PACKAGE_NAME = "com.xunmeng.pinduoduo"
 
@@ -533,7 +533,11 @@ def collect_single_product(search_word, serial_num):
     # 获取生产日期
     detail = find_and_click_detail()
     date = get_date_with_retry() if detail else ""
-
+    if detail:
+        d.press("back")
+        ensure_back_to_list(d)
+        time.sleep(1.5)
+    time.sleep(0.5)
     matched_spec = ""
     spec_price = ""
     title_cap_nums, title_color_codes = sku_matcher.extract_specs(title)
@@ -687,10 +691,9 @@ def select_and_collect_best_product(search_word, serial_num):
             if res["passed"]:
                 any_passed = True
             # 返回列表页（处理弹窗）
-            if res["found_detail"]:
-                d.press("back")
-                ensure_back_to_list(d)
-                time.sleep(1.5)
+            # if res["found_detail"]:
+            #     ensure_back_to_list(d)
+            #     time.sleep(1.5)
             d.press("back")
             ensure_back_to_list(d)
             time.sleep(1)
