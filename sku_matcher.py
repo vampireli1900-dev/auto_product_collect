@@ -104,15 +104,21 @@ def get_sku_identifiers(search_word: str) -> list:
     # 5. 容量（只添加带数字的单位，如 50ml）
     m = re.search(r'(\d+(?:\.\d+)?)\s*(ml|g|l|oz|毫升|克|升)', search_word, re.I)
     if m:
-        num = float(m.group(1))  # 转为浮点数
+        num_str = m.group(1)  # 原始数字字符串，如 "30" 或 "30.5"
+        num_float = float(num_str)
         unit = m.group(2).lower()
         unit_map = {'毫升': 'ml', '克': 'g', '升': 'l'}
         unit = unit_map.get(unit, unit)
-        # 过滤小容量（例如 < 5ml/g，样品/小样通常较小）
-        if num < 2:
-            print(f"[DEBUG][get_sku_identifiers] 跳过小容量: {num}{unit}")
+        # 过滤小容量（例如 < 2ml/g，样品/小样通常较小）
+        if num_float < 2:
+            print(f"[DEBUG][get_sku_identifiers] 跳过小容量: {num_float}{unit}")
         else:
-            cap_id = f"{num}{unit}"
+            # 如果是整数（如 30.0），则显示为 "30"，否则保留小数
+            if num_float.is_integer():
+                num_display = str(int(num_float))
+            else:
+                num_display = num_str  # 保留原始小数形式，如 "30.5"
+            cap_id = f"{num_display}{unit}"
             if cap_id not in seen:
                 identifiers.append(cap_id)
 
@@ -251,21 +257,24 @@ def _click_sku_by_identifier(d, identifier: str, timeout: float = 2.0) -> bool:
         def is_valid_spec_text(text):
             if not text:
                 return False
-            # 长度过长（超过20个字符）大概率不是规格
-            if len(text) > 20:
+            # 长度过长（超过30字符）大概率不是规格
+            if len(text) > 30:
                 return False
             # 包含地址关键词 → 跳过
-            addr_keywords = ['路', '号', '铺', '城', '区', '街', '楼', '室', '栋', '单元', '村', '巷', '道', '门', '牌', '广场', '商业', '中心']
+            addr_keywords = ['路', '号', '铺', '城', '区', '街', '楼', '室', '栋', '单元', '村', '巷', '道', '门', '牌',
+                             '广场', '商业', '中心']
             if any(kw in text for kw in addr_keywords):
                 return False
-            # 包含营销/无关词 → 跳过
-            noise = ['快递', '邮费', '运费',  ]
+            # 包含营销/无关词 → 跳过（可根据需要扩充）
+            noise = ['快递', '邮费', '运费', '店铺', '发货', '热销', '正品', '包邮', '收藏', '销量', '评价']
             if any(kw in text for kw in noise):
                 return False
-            # 允许纯数字（长度≤5）或数字+少量字母（如 1A, 02B）
+            # 新增：如果文本包含标识（色号/数字），且长度合理，则视为有效
+            if identifier in text:
+                return True
+            # 原有规则：纯数字/数字+字母（≤6位）或完全等于标识
             if re.match(r'^[0-9a-zA-Z]+$', text) and len(text) <= 6:
                 return True
-            # 如果文本完全等于标识，直接放行（更严格）
             if text.strip() == identifier:
                 return True
             return False
@@ -579,7 +588,7 @@ def get_sku_price_auto(d, search_word: str, click_timeout: float = 2.0) -> Dict[
 d = u2.connect()
 # ====================== 调试运行 ======================
 if __name__ == '__main__':
-    result2 = get_sku_price_auto(d, 'YSL圣罗兰黑金方管1968')
+    result2 = get_sku_price_auto(d, '薇姿VICHY洗发水绿标硫化硒去屑止痒控油洗发乳390ml')
     print("\n===== 结果2 =====")
     print("匹配文本:", result2["title"])
     print("价格:", result2["current_price"])

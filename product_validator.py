@@ -346,6 +346,25 @@ def apply_manual_overrides(search_word, product_title, result):
 
     return result
 
+def has_set_indicator(text: str) -> bool:
+    """
+    判断文本是否表示套装或组合装。
+    检测规则：
+    1. 包含“套装”、“三件套”、“礼盒”等关键词；
+    2. 匹配“数字ml + 数字ml”模式（中间可有 + × * 等符号）。
+    """
+    if not text:
+        return False
+    # 关键词检测
+    keywords = ["套装", "三件套"]
+    if any(kw in text for kw in keywords):
+        return True
+    # 容量组合检测：如 150ml+100ml, 30ml*2, 50ml×2 等
+    pattern = r'\d+ml\s*[+×*]\s*\d+ml'
+    if re.search(pattern, text, re.IGNORECASE):
+        return True
+    return False
+
 def validate_product(
     search_word,
     product_title,
@@ -365,7 +384,10 @@ def validate_product(
     s_simple = extract_simple_pack(search_word)
     p_simple = extract_simple_pack(product_title)
     simple_ok = (s_simple == p_simple) if s_simple and p_simple else True
-
+    # ---------- 套装一致性检查 ----------
+    s_has_set = has_set_indicator(search_word)
+    p_has_set = has_set_indicator(product_title)
+    set_ok = (s_has_set == p_has_set)
     # 容量检查
     if s_cap:
         cap_ok = s_cap.issubset(p_cap)
@@ -479,6 +501,7 @@ def validate_product(
     if not spec_ok: reasons.append("规格不匹配")
     if not conc_ok: reasons.append("浓度不匹配")
     if not simple_ok: reasons.append("简装不匹配")
+    if not set_ok: reasons.append("套装状态不一致")
     if not name_ok: reasons.append(f"品名相似不足(ratio={ratio:.1%})")
     original_remark = '；'.join(reasons) if reasons else "通过"
 
@@ -489,7 +512,7 @@ def validate_product(
     # ---------------------------------------------------------------------
 
     # 最终校验
-    final = brand_ok and spec_ok and conc_ok and simple_ok and name_ok
+    final = brand_ok and spec_ok and conc_ok and simple_ok and name_ok and set_ok
 
     # 构造输出原因
     if final:
@@ -503,6 +526,7 @@ def validate_product(
         if not spec_ok: reasons_dbg.append("规格不匹配")
         if not conc_ok: reasons_dbg.append("浓度不匹配")
         if not simple_ok: reasons_dbg.append("简装不匹配")
+        if not set_ok: reasons_dbg.append("套装状态不一致")
         if not name_ok: reasons_dbg.append(f"品名相似不足(ratio={ratio:.1%})")
         reason_tail = "；".join(reasons_dbg)
         # 附加单例说明（如果有）
@@ -519,6 +543,7 @@ def validate_product(
         f"色号    ：{s_color} → {p_color}",
         f"浓度    ：{s_conc} → {p_conc} | {'✅' if conc_ok else '❌'}",
         f"简装    ：{s_simple} → {p_simple} | {'✅' if simple_ok else '❌'}",
+        f"套装    ：{'含' if s_has_set else '不含'} → {'含' if p_has_set else '不含'} | {'✅' if set_ok else '❌'}",
         f"清洗后  ：{s_clean} → {p_clean}",
         f"品名匹配：{method} | {'✅' if name_ok else '❌'}",
         f"结果    ：{'✅ PASS' if final else '❌ FAIL'} | 原因：{reason_tail}",

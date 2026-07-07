@@ -27,8 +27,8 @@ detail_model = YOLO("runs/detect/product_detail_train/weights/best.pt")
 reader = easyocr.Reader(['ch_sim'], gpu=False)
 
 # ====================== 配置项 ======================
-PRODUCT_LIST_FILE = "搜索名单.xlsx"
-SEARCH_INTERVAL_SECONDS = 60
+PRODUCT_LIST_FILE = "复采名单.xlsx"
+SEARCH_INTERVAL_SECONDS = 10
 PACKAGE_NAME = "com.xunmeng.pinduoduo"
 
 # ====================== 全局存储 ======================
@@ -310,7 +310,7 @@ def extract_product_info(xml_content: str, search_word: str):
     blacklist = [
         "电池", "状态栏", "电量", "百分之", "WLAN", "信号",
         "通知", "高德", "淘宝", "浏览器", "手机管家", "振铃器", "静音",
-        "返回", "分享", "店铺", "客服", "工具栏", "顶部", "拼小圈",
+        "返回", "分享", "客服", "工具栏", "顶部", "拼小圈",
         "¥", "￥", "大促价", "已抢", "假一赔十", "100%正品", "拼单价",
         "狂降", "直接成团", "买过", "次", "图片", "该店", "tronplayer_view", "查看全部",
     ]
@@ -559,17 +559,25 @@ def collect_single_product(search_word, serial_num):
                 matched_spec = spec_result["title"]
                 spec_price = spec_result["current_price"]
                 cur = spec_price
-                # 关键修改：只有原品名匹配通过时，才认为校验通过
-                if res.get('name_ok', False):
+
+                # 检查原始失败原因是否包含套装不一致
+                set_mismatch = "套装状态不一致" in fail_reason
+
+                # 只有品名匹配通过，且不是因为套装不一致，才认为校验通过
+                if res.get('name_ok', False) and not set_mismatch:
                     match_pass = True
                     fail_reason = ""
                     if not res.get('conc_ok', True):
                         fail_reason = "浓度不匹配（规格匹配成功）"
                         print(f"⚠️ 规格匹配成功但浓度不匹配，仍标记通过，原因已记录")
                     print(f"✅ 规格匹配成功，且品名已匹配，校验通过")
+                elif res.get('name_ok', False) and set_mismatch:
+                    # 品名匹配但套装不一致，强制不通过
+                    match_pass = False
+                    fail_reason = "套装状态不一致（规格匹配成功但套装不匹配）"
+                    print(f"⚠️ 规格匹配成功但套装不一致，校验不通过")
                 else:
                     match_pass = False
-                    # 保留原失败原因，或追加说明
                     fail_reason = res.get("remark", "品名不匹配，规格匹配但无效")
                     print(f"⚠️ 规格匹配成功但品名不匹配，校验仍不通过")
             else:
