@@ -37,8 +37,8 @@ debug_record_list = []
 
 EXCEL_HEADER = [
     "序号", "货品名称", "关键词", "原价", "现价",
-    "是否百亿补贴产品", "生产日期", "校验通过", "未通过原因",
-    "匹配规格", "规格价格"          # 新增两列
+    "是否百亿补贴产品", "商品标签", "生产日期", "校验通过", "未通过原因",
+    "匹配规格", "规格价格"
 ]
 
 DEBUG_EXCEL_HEADER = [
@@ -47,7 +47,7 @@ DEBUG_EXCEL_HEADER = [
     "品牌是否一致", "规格是否匹配通过",
     "品名匹配率(%)", "最终校验是否通过",
     "校验时间", "备注/失败原因",
-    "匹配规格", "规格价格"
+    "匹配规格", "规格价格", "商品标签"
 ]
 
 # ====================== 保存调试记录 ======================
@@ -516,7 +516,7 @@ def get_date_with_retry():
     m = re.search(r'text="(\d{4}-\d{1,2}-\d{1,2})"', hierarchy)
     return m.group(1) if m else ""
 
-def collect_single_product(search_word, serial_num):
+def collect_single_product(search_word, serial_num, tags):
     xml = d.dump_hierarchy()
     info = extract_product_info(xml, search_word)
     subsidy = "是" if is_subsidy_product() else "否"
@@ -524,7 +524,15 @@ def collect_single_product(search_word, serial_num):
     title = info["title"]
     ori = info["original_price"]
     cur = info["current_price"]
-
+    # 确定商品标签
+    if "baiyi" in tags:
+        product_label = "百亿补贴"
+    elif "brand" in tags:
+        product_label = "品牌黑标"
+    elif "global" in tags:
+        product_label = "全球购"
+    else:
+        product_label = "普通"
     # 执行商品信息校验
     res = validate_product(search_word, title)
     match_pass = res['final']
@@ -610,7 +618,7 @@ def collect_single_product(search_word, serial_num):
 
     # 写入记录
     record_list.append([
-        serial_num, title, search_word, ori, cur, subsidy, date,
+        serial_num, title, search_word, ori, cur, subsidy, product_label, date,
         "✅" if match_pass else "❌",
         fail_reason,
         matched_spec,
@@ -626,11 +634,12 @@ def collect_single_product(search_word, serial_num):
         "是" if res['brand_ok'] else "否",
         "是" if res['spec_ok'] else "否",
         round(res['ratio'] * 100, 2),
-        "是" if match_pass else "否",  # 使用匹配后的结果
+        "是" if match_pass else "否",
         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         fail_reason,
         matched_spec,
-        spec_price
+        spec_price,
+        product_label
     ])
 
     print("\n" + "=" * 80)
@@ -698,7 +707,7 @@ def select_and_collect_best_product(search_word, serial_num):
             print(f"--- 进入商品 {i + 1}/{len(candidates)} ---")
             d.click(p["cx"], p["cy"])
             time.sleep(0.5)
-            res = collect_single_product(search_word, serial_num)
+            res = collect_single_product(search_word, serial_num, p["tags"])
             if res["passed"]:
                 any_passed = True
             # 返回列表页（处理弹窗）

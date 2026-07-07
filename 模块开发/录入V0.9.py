@@ -15,10 +15,25 @@ BASE_DATE = pd.Timestamp("1900-01-01")
 
 # 数量词正则（包含双瓶装等）
 QUANTITY_PATTERN = re.compile(
-    r'(双支|两支|2支|\*2|对装|双只|两瓶|2瓶|两支装|双支装|双瓶装|两瓶装|双包装|两份|双份|两只装|2只装|两只|2只)',
+    r'(双支|两支|2支|\*2|对装|双只|两瓶|2瓶|两支装|双支装|双瓶装|两瓶装|双包装|两份|双份|两只装|2只装|两只|2只|两盒|2盒|双盒)',
     re.IGNORECASE
 )
+"""
+从同一序号的多条采集记录中选出最佳一条。
 
+优先级规则（从高到低）：
+1. 校验通过 —— 已在调用前过滤，所有记录均满足“校验通过 == ✅”，因此不在此处重复排序。
+2. 规格匹配优先级 —— 按“匹配规格”列的值：
+    - 匹配成功（值非空且不包含“匹配失败”，如“已选: xxx”） 优先级最高（2）
+    - 空值或缺失（无规格信息）                            优先级中等（1）
+    - 明确为“匹配失败”                                  优先级最低（0）
+3. 是否百亿补贴 —— “是” > “否”
+4. 是否有生产日期 —— 有生产日期 > 无生产日期
+5. 生产日期早晚 —— 越晚（日期越大）越好（降序）
+6. 最终价格 —— 经数量调整（双份乘/除）后，价格越低越好（升序）
+
+排序时依次按上述维度降序/升序，前者维度相同时才比较后者。
+"""
 # ================== 辅助函数 ==================
 def normalize_price(value):
     if pd.isna(value):
@@ -106,10 +121,69 @@ def compute_candidate_price(row):
         return curr_price if not pd.isna(curr_price) else orig_price
 
 
-def select_best_record(records):
+def select_best_record(records, last_price_map=None):
+    """
+    从同一序号的多条采集记录中选出最佳一条。
+    增加异常价格修正：当原价和现价相差>8倍时，根据上次价格修正。
+    """
     if records.empty:
         return None
     records = records.copy()
+
+    # ----- 价格修正函数（内部） -----
+    def fix_price_anomaly(row, last_price):
+        orig = normalize_price(row.get('原价'))
+        curr = normalize_price(row.get('现价'))
+        if pd.isna(orig) or pd.isna(curr):
+            return row
+        # 检查倍数是否大于8
+        max_val = max(orig, curr)
+        min_val = min(orig, curr)
+        if min_val == 0:
+            return row
+        if max_val / min_val <= 8:
+            return row
+        # 如果上次价格无效，无法修正
+        if pd.isna(last_price) or last_price == 0:
+            # 没有上次价格参考，尝试根据数值特征自动修正
+            # 如果价格相差大于8倍，且较小值<30，较大值>100，则假定较大值为真实价格
+            if max_val / min_val > 8 and min_val < 30 and max_val > 100:
+                # 将两个价格都设为较大值（修正错误）
+                row['原价'] = max_val
+                row['现价'] = max_val
+                # 可以增加备注，但此处不强制
+            return row
+        # 选择与上次价格更接近的作为真实价格
+        dist_orig = abs(orig - last_price)
+        dist_curr = abs(curr - last_price)
+        if dist_orig < dist_curr:
+            real_price = orig
+            fake_price = curr
+        else:
+            real_price = curr
+            fake_price = orig
+        # 检查前两位数字是否相同（去除小数点）
+        str_real = str(real_price).replace('.', '')
+        str_fake = str(fake_price).replace('.', '')
+        if len(str_real) >= 2 and len(str_fake) >= 2 and str_real[:2] == str_fake[:2]:
+            # 修正错误的价格为真实价格
+            if real_price == orig:
+                # 原价正确，修正现价
+                row['现价'] = real_price
+            else:
+                # 现价正确，修正原价
+                row['原价'] = real_price
+        return row
+
+    # 应用修正（如果有上次价格映射）
+    seq = records.iloc[0]['序号']  # 同一组序号相同
+    last_price = None
+    if last_price_map and seq in last_price_map:
+        last_price = last_price_map[seq]
+    if last_price is not None:
+        records = records.apply(lambda r: fix_price_anomaly(r, last_price), axis=1)
+
+    # 计算基准价格和最终价格（含数量调整）
     records['_base_price'] = records.apply(compute_candidate_price, axis=1)
     adj = records.apply(
         lambda row: adjust_price_by_quantity(row['_base_price'], row.get('关键词'), row.get('货品名称')),
@@ -117,12 +191,31 @@ def select_best_record(records):
     )
     records['_final_price'] = adj[0]
     records['_remark'] = adj[1]
+
+    # 生产日期处理
     records['_parsed_date'] = records['生产日期'].apply(parse_date)
     records['_has_date'] = records['_parsed_date'].notna()
-    records['_bai_score'] = (records['是否百亿补贴产品'].astype(str).str.strip() == '是').astype(int)
+
+    # 百亿补贴标记
+    is_bai = (records['是否百亿补贴产品'].astype(str).str.strip() == '是')
+    records['_bai_score'] = is_bai.astype(int)
+
+    # 规格匹配优先级
+    if '匹配规格' in records.columns:
+        def match_priority(val):
+            if pd.isna(val) or val == '':
+                return 1
+            if '匹配失败' in str(val):
+                return 0
+            return 2
+        records['_spec_priority'] = records['匹配规格'].apply(match_priority)
+    else:
+        records['_spec_priority'] = 1
+
+    # 排序
     records_sorted = records.sort_values(
-        by=['_bai_score', '_has_date', '_parsed_date', '_final_price'],
-        ascending=[False, False, False, True],
+        by=['_bai_score', '_has_date', '_parsed_date', '_final_price', '_spec_priority'],
+        ascending=[False, False, False, True, False],
         na_position='last'
     )
     return records_sorted.iloc[0]
@@ -198,7 +291,12 @@ def main():
     if '上次价格' not in df_input.columns:
         df_input['上次价格'] = ''
 
-
+    last_price_map = {}
+    for _, row in df_input.iterrows():
+        seq = str(row['序号'])
+        last_price = normalize_price(row.get('上次价格'))
+        if not pd.isna(last_price):
+            last_price_map[seq] = last_price
 
     required_cols = ['序号', '校验通过', '是否百亿补贴产品', '生产日期', '原价', '现价', '规格价格', '货品名称',
                      '关键词']
@@ -232,7 +330,7 @@ def main():
     update_map = {}
 
     for seq, group in grouped:
-        best = select_best_record(group)
+        best = select_best_record(group, last_price_map)
         if best is None:
             continue
 
