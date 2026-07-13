@@ -27,7 +27,7 @@ detail_model = YOLO("runs/detect/product_detail_train/weights/best.pt")
 reader = easyocr.Reader(['ch_sim'], gpu=False)
 
 # ====================== 配置项 ======================
-PRODUCT_LIST_FILE = "复采名单.xlsx"
+PRODUCT_LIST_FILE = "搜索名单.xlsx"
 SEARCH_INTERVAL_SECONDS = 10
 PACKAGE_NAME = "com.xunmeng.pinduoduo"
 
