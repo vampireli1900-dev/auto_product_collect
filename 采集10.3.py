@@ -556,7 +556,8 @@ def collect_single_product(search_word, serial_num, tags):
     search_cap, search_color = sku_matcher.extract_specs(search_word)
 
     # 判断是否需要进入规格匹配
-    if (not match_pass and any(kw in fail_reason for kw in ["规格", "色号", "容量", "浓度"])) and (search_cap or search_color):
+    if ((not match_pass and any(kw in fail_reason for kw in ["规格", "色号", "容量", "浓度"])) or multi_spec) and (
+            search_cap or search_color):
         if multi_spec:
             print(f"🔧 标题包含多规格 (容量:{title_cap_nums}, 色号:{title_color_codes})，尝试进入规格面板匹配...")
         else:
