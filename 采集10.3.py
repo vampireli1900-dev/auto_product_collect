@@ -28,7 +28,7 @@ reader = easyocr.Reader(['ch_sim'], gpu=False)
 
 # ====================== 配置项 ======================
 PRODUCT_LIST_FILE = "搜索名单.xlsx"
-SEARCH_INTERVAL_SECONDS = 10
+SEARCH_INTERVAL_SECONDS = 1
 PACKAGE_NAME = "com.xunmeng.pinduoduo"
 
 # ====================== 全局存储 ======================
@@ -287,7 +287,10 @@ def sort_products_by_priority():
 def is_subsidy_product():
     return "百亿补贴" in d.dump_hierarchy() or "官方补贴" in d.dump_hierarchy()
 
+
+
 def extract_product_info(xml_content: str, search_word: str):
+    # ---------- 辅助函数 ----------
     def get_ngram_pairs(text, n=2):
         text = re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", text.lower())
         return (
@@ -303,6 +306,7 @@ def extract_product_info(xml_content: str, search_word: str):
     def count_chinese(text):
         return len(re.findall(r"[\u4e00-\u9fff]", text))
 
+    # ---------- 提取标题 ----------
     search_cn_count = count_chinese(search_word)
     desc_list = re.findall(r'content-desc="([^"]+)"', xml_content)
     best_title = ""
@@ -327,6 +331,7 @@ def extract_product_info(xml_content: str, search_word: str):
         elif match_count == best_count and match_count > 0:
             if len(desc) > len(best_title):
                 best_title = desc
+
     if not best_title:
         search_chars = get_single_chars(search_word)
         best_count = 0
@@ -345,86 +350,120 @@ def extract_product_info(xml_content: str, search_word: str):
                 if len(desc) > len(best_title):
                     best_title = desc
 
-    # ====================== 以下是【全新重写】的价格提取逻辑 ======================
-    # 1. 找到所有带 ¥ 的 content-desc 文本
-    price_desc_list = []
-    for desc in re.findall(r'content-desc="([^"]+)"', xml_content):
-        if "¥" in desc:
-            price_desc_list.append(desc)
-
-    # 2. 清洗：新增2条规则 + 原有规则
-    cleaned_texts = []
-    for text in price_desc_list:
-        if "单独购买" in text:
-            continue
-        # ====================== 清洗规则（截断版） ======================
-        cleaned_texts = []
-        for text in price_desc_list:
-            # 规则0：包含单独购买 → 跳过
-            if "单独购买" in text:
-                continue
-            # 找到所有规则的最早出现位置
-            split_at = len(text)
-            # 规则1：时间 xx:xx → 截断
-            match1 = re.search(r"\d{1,2}:\d{2}", text)
-            if match1:
-                split_at = min(split_at, match1.start())
-            # 规则2：X人团 → 截断
-            match2 = re.search(r"\d人团", text)
-            if match2:
-                split_at = min(split_at, match2.start())
-            # 规则3：数字+元 / 件 / 万 → 截断
-            match3 = re.search(r"\d+\.?\d*(元|件|万\+?|万)", text)
-            if match3:
-                split_at = min(split_at, match3.start())
-            # 规则4：降 + 数字 → 截断
-            match4 = re.search(r"降\d+\.?\d*", text)
-            if match4:
-                split_at = min(split_at, match4.start())
-
-            match5 = re.search(r"\d{2}人想拼", text)
-            if match5:
-                split_at = min(split_at, match5.start())
-            # 从最早匹配的位置截断，后面全部丢掉
-            text = text[:split_at].strip()
-            cleaned_texts.append(text)
-
-    # 3. 统一提取所有价格
-    all_prices = []
-    for t in cleaned_texts:
-        prices = re.findall(r"[¥￥]\s*(\d+\.?\d*)", t)
-        all_prices.extend(prices)
-
-    # 4. 过滤规则：去掉 0开头 / 个位数（1-9）
-    valid_prices = []
-    for p in all_prices:
-        p_str = str(p).strip()
-        # 跳过空
-        if not p_str:
-            continue
-        # 跳过 0 开头
-        if p_str.startswith("0") and len(p_str) > 1:
-            continue
-        # 转数字
-        try:
-            num = float(p_str)
-        except:
-            continue
-        # 跳过个位数
-        if num < 10:
-            continue
-        valid_prices.append(round(num, 2))
-
-    # 去重 + 排序
-    valid_prices = sorted(list(set(valid_prices)))
-
+    # ---------- 价格提取（最终版） ----------
     original_price = None
     current_price = None
-    if len(valid_prices) >= 2:
-        original_price = str(max(valid_prices))
-        current_price = str(min(valid_prices))
-    elif len(valid_prices) == 1:
-        current_price = str(valid_prices[0])  # 只有一个 → 算现价
+
+    for text in re.findall(r'content-desc="([^"]+)"', xml_content):
+        if "¥" not in text and "￥" not in text:
+            continue
+        if "单独购买" in text:
+            continue
+
+        # ---- 情况1：包含“折” ----
+        if "折" in text:
+            idx = text.find("折")
+
+            # ----- 提取原价（折前部分） -----
+            before = text[:idx]
+            price_candidates = re.findall(r"[¥￥]\s*(\d+\.?\d*)", before)
+            valid_original = []
+            for p_str in price_candidates:
+                try:
+                    if '.' in p_str:
+                        int_part = p_str.split('.')[0]
+                    else:
+                        int_part = p_str
+                    if len(int_part) > 1:
+                        new_int = int_part[:-1]
+                        new_num = float(new_int)
+                        if new_num >= 10:
+                            valid_original.append(new_num)
+                except:
+                    pass
+            if valid_original:
+                original_price = str(max(valid_original))
+
+            # ----- 提取现价（折后部分） -----
+            after = text[idx+1:]
+            # 判断“抢券后”前是否有时间（如12:00），若有则删除券后内容
+            time_match = re.search(r"\d{1,2}:\d{2}", after)
+            if time_match and "抢券后" in after:
+                # 如果有时间，且时间在“抢券后”之前，则删除“抢券后”及其之后
+                if time_match.start() < after.find("抢券后"):
+                    after = after[:after.find("抢券后")]
+            # 应用截断规则（时间、人团、单位、降等）
+            truncate_at = len(after)
+            patterns = [
+                r"\d{1,2}:\d{2}",
+                r"\d+人[团想拼]",
+                r"\d+\.?\d*(元|件|万\+?|万)",
+                r"降\d+\.?\d*"
+            ]
+            for pat in patterns:
+                m = re.search(pat, after)
+                if m:
+                    truncate_at = min(truncate_at, m.start())
+            after = after[:truncate_at].strip()
+
+            # 提取所有数字（不带货币符号）
+            numbers = re.findall(r"\d+\.?\d*", after)
+            valid_current = [float(n) for n in numbers if float(n) >= 10]
+            if valid_current:
+                current_price = str(valid_current[0])  # 取第一个
+
+            # 如果折后没有数字，尝试提取货币符号后的数字
+            if current_price is None:
+                currency_prices = re.findall(r"[¥￥]\s*(\d+\.?\d*)", after)
+                if currency_prices:
+                    current_price = str(min(float(p) for p in currency_prices if float(p) >= 10))
+
+            if original_price is not None or current_price is not None:
+                break
+
+        # ---- 情况2：不包含“折” ----
+        else:
+            # 检查是否有“券后”
+            if "券后" in text:
+                # 提取所有货币符号后的数字（用于原价）
+                all_prices = re.findall(r"[¥￥]\s*(\d+\.?\d*)", text)
+                valid_all = [float(p) for p in all_prices if float(p) >= 10]
+                if valid_all:
+                    # 原价取最大的（通常第一个）
+                    original_price = str(max(valid_all))
+                # 现价从“券后”后面提取数字
+                after_quan = text[text.find("券后") + 2:]  # “券后”之后内容
+                # 提取数字（可能带货币符号，也可能不带）
+                quan_nums = re.findall(r"\d+\.?\d*", after_quan)
+                if quan_nums:
+                    # 取第一个大于等于10的数字
+                    for num_str in quan_nums:
+                        try:
+                            val = float(num_str)
+                            if val >= 10:
+                                current_price = str(val)
+                                break
+                        except:
+                            pass
+                # 如果没有从“券后”后提取到，再尝试提取货币符号后的（但通常有）
+                if current_price is None:
+                    currency_after = re.findall(r"[¥￥]\s*(\d+\.?\d*)", after_quan)
+                    if currency_after:
+                        current_price = str(min(float(p) for p in currency_after if float(p) >= 10))
+            else:
+                # 无折也无券后，直接提取所有货币数字
+                prices = re.findall(r"[¥￥]\s*(\d+\.?\d*)", text)
+                valid = [float(p) for p in prices if float(p) >= 10]
+                if valid:
+                    if len(valid) >= 2:
+                        original_price = str(max(valid))
+                        current_price = str(min(valid))
+                    else:
+                        price = str(valid[0])
+                        original_price = price
+                        current_price = price
+            if original_price is not None or current_price is not None:
+                break
 
     return {
         "title": best_title.strip() if best_title else "",

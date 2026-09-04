@@ -73,6 +73,11 @@ brand_lib = {
     "费列罗": ["Ferrero", "费列", "费列罗"],
     "伊丽莎白雅顿": ["ElizabethArden", "Elizabeth Arden", "伊丽莎白雅顿", '雅顿'],
     "迪奥": ["Dior", "迪奥"],
+    "克雷德": ["Creed", "克雷德"],
+    "罗意威": ["Loewe", "罗意威"],
+    "香缇卡": ["Chantecaille", "香缇卡"],
+    "伊索": ["Aesop", "伊索"],
+    "CNP": ["CNP", "CNP"],
 }
 
 def extract_concentration(text):
