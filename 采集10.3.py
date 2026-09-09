@@ -364,7 +364,7 @@ def extract_product_info(xml_content: str, search_word: str):
         if "折" in text:
             idx = text.find("折")
 
-            # ----- 提取原价（折前部分） -----
+            # 原价（折前）
             before = text[:idx]
             price_candidates = re.findall(r"[¥￥]\s*(\d+\.?\d*)", before)
             valid_original = []
@@ -384,15 +384,14 @@ def extract_product_info(xml_content: str, search_word: str):
             if valid_original:
                 original_price = str(max(valid_original))
 
-            # ----- 提取现价（折后部分） -----
+            # 现价（折后）
             after = text[idx+1:]
-            # 判断“抢券后”前是否有时间（如12:00），若有则删除券后内容
+            # 处理“抢券后”前的“时间”干扰
             time_match = re.search(r"\d{1,2}:\d{2}", after)
             if time_match and "抢券后" in after:
-                # 如果有时间，且时间在“抢券后”之前，则删除“抢券后”及其之后
                 if time_match.start() < after.find("抢券后"):
                     after = after[:after.find("抢券后")]
-            # 应用截断规则（时间、人团、单位、降等）
+            # 截断规则（时间、人团、单位、降等）
             truncate_at = len(after)
             patterns = [
                 r"\d{1,2}:\d{2}",
@@ -406,13 +405,12 @@ def extract_product_info(xml_content: str, search_word: str):
                     truncate_at = min(truncate_at, m.start())
             after = after[:truncate_at].strip()
 
-            # 提取所有数字（不带货币符号）
+            # 提取数字（不含货币符号）
             numbers = re.findall(r"\d+\.?\d*", after)
             valid_current = [float(n) for n in numbers if float(n) >= 10]
             if valid_current:
-                current_price = str(valid_current[0])  # 取第一个
-
-            # 如果折后没有数字，尝试提取货币符号后的数字
+                current_price = str(valid_current[0])
+            # 若没有，再尝试提取货币符号后的
             if current_price is None:
                 currency_prices = re.findall(r"[¥￥]\s*(\d+\.?\d*)", after)
                 if currency_prices:
@@ -423,20 +421,31 @@ def extract_product_info(xml_content: str, search_word: str):
 
         # ---- 情况2：不包含“折” ----
         else:
-            # 检查是否有“券后”
-            if "券后" in text:
-                # 提取所有货币符号后的数字（用于原价）
-                all_prices = re.findall(r"[¥￥]\s*(\d+\.?\d*)", text)
+            # -------- 关键改动：先应用截断规则清理干扰 --------
+            truncate_at = len(text)
+            patterns = [
+                r"\d{1,2}:\d{2}",
+                r"\d+人[团想拼]",
+                r"\d+\.?\d*(元|件|万\+?|万)",
+                r"降\d+\.?\d*"
+            ]
+            for pat in patterns:
+                m = re.search(pat, text)
+                if m:
+                    truncate_at = min(truncate_at, m.start())
+            clean_text = text[:truncate_at].strip()
+            # ------------------------------------------------
+
+            if "券后" in clean_text:
+                # 原价：所有货币数字取最大
+                all_prices = re.findall(r"[¥￥]\s*(\d+\.?\d*)", clean_text)
                 valid_all = [float(p) for p in all_prices if float(p) >= 10]
                 if valid_all:
-                    # 原价取最大的（通常第一个）
                     original_price = str(max(valid_all))
-                # 现价从“券后”后面提取数字
-                after_quan = text[text.find("券后") + 2:]  # “券后”之后内容
-                # 提取数字（可能带货币符号，也可能不带）
+                # 现价：“券后”后面的数字
+                after_quan = clean_text[clean_text.find("券后") + 2:]
                 quan_nums = re.findall(r"\d+\.?\d*", after_quan)
                 if quan_nums:
-                    # 取第一个大于等于10的数字
                     for num_str in quan_nums:
                         try:
                             val = float(num_str)
@@ -445,14 +454,13 @@ def extract_product_info(xml_content: str, search_word: str):
                                 break
                         except:
                             pass
-                # 如果没有从“券后”后提取到，再尝试提取货币符号后的（但通常有）
                 if current_price is None:
                     currency_after = re.findall(r"[¥￥]\s*(\d+\.?\d*)", after_quan)
                     if currency_after:
                         current_price = str(min(float(p) for p in currency_after if float(p) >= 10))
             else:
-                # 无折也无券后，直接提取所有货币数字
-                prices = re.findall(r"[¥￥]\s*(\d+\.?\d*)", text)
+                # 无折也无券后，直接提取货币数字（已截断）
+                prices = re.findall(r"[¥￥]\s*(\d+\.?\d*)", clean_text)
                 valid = [float(p) for p in prices if float(p) >= 10]
                 if valid:
                     if len(valid) >= 2:
@@ -462,6 +470,7 @@ def extract_product_info(xml_content: str, search_word: str):
                         price = str(valid[0])
                         original_price = price
                         current_price = price
+
             if original_price is not None or current_price is not None:
                 break
 
