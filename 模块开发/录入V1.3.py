@@ -13,11 +13,7 @@ COLLECT_FILE = "商品采集汇总.xlsx"
 OUTPUT_FILE = "录入表_更新.xlsx"
 BASE_DATE = pd.Timestamp("1900-01-01")
 
-# 数量词正则（包含双瓶装等）
-QUANTITY_PATTERN = re.compile(
-    r'(双支|两支|2支|\*2|对装|双只|两瓶|2瓶|两支装|双支装|双瓶装|两瓶装|双包装|两份|双份|两只装|2只装|两只|2只|两盒|2盒|双盒|两罐)',
-    re.IGNORECASE
-)
+
 """
 从同一序号的多条采集记录中选出最佳一条。
 
@@ -85,15 +81,66 @@ def get_shelf_life_days(prod_date, exp_date):
     return None
 
 
+# 中文数字映射
+CN_NUM = {
+    '一': 1, '二': 2, '两': 2, '三': 3, '四': 4,
+    '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10
+}
+
+def extract_quantity_multiplier(text):
+    """
+    从文本中提取数量倍数，默认 1。
+    支持：
+    *3、x3、X3、×3
+    3支、3瓶、3盒、3只、3包、3份、3件、3罐、3袋、3装
+    三支、两瓶、双支、两支、双瓶、两瓶等
+    """
+    if pd.isna(text):
+        return 1
+
+    s = str(text)
+
+    # 1）优先匹配 *3、x3、X3、×3
+    m = re.search(r'(?:\*|x|X|×)\s*(\d+)', s)
+    if m:
+        qty = int(m.group(1))
+        if 1 <= qty <= 20:
+            return qty
+
+    # 2）匹配 3支、3瓶、3盒、3只、3包、3份、3件、3罐、3袋、3装
+    m = re.search(r'(\d+)\s*(?:支|瓶|盒|罐|只|包|份|件|袋|装)', s)
+    if m:
+        qty = int(m.group(1))
+        if 1 <= qty <= 20:
+            return qty
+
+    # 3）匹配中文数量：三支、两瓶、三盒等
+    m = re.search(r'([一二两三四五六七八九十])\s*(?:支|瓶|盒|罐|只|包|份|件|袋|装)', s)
+    if m:
+        return CN_NUM.get(m.group(1), 1)
+
+    # 4）双份类兜底
+    if re.search(r'(双支|两支|双瓶|两瓶|双只|两只|双盒|两盒|双罐|两罐|对装|双包装|双份|两份)', s):
+        return 2
+
+    return 1
+
+
 def adjust_price_by_quantity(price, keyword, product_name):
     if pd.isna(price):
         return price, ''
-    kw_has = bool(QUANTITY_PATTERN.search(str(keyword))) if not pd.isna(keyword) else False
-    name_has = bool(QUANTITY_PATTERN.search(str(product_name))) if not pd.isna(product_name) else False
-    if not kw_has and name_has:
-        return price / 2.0, '价格减半（双份）'
-    elif kw_has and not name_has:
-        return price * 2.0, '价格翻倍（双份）'
+
+    kw_qty = extract_quantity_multiplier(keyword)
+    name_qty = extract_quantity_multiplier(product_name)
+
+    # 货品名称是多件，关键词是单件：把总价折算成单件价
+    if kw_qty == 1 and name_qty > 1:
+        return price / name_qty, f'价格除以{name_qty}（{name_qty}件）'
+
+    # 关键词是多件，货品名称是单件：按关键词数量放大
+    elif kw_qty > 1 and name_qty == 1:
+        return price * kw_qty, f'价格乘以{kw_qty}（{kw_qty}件）'
+
     else:
         return price, ''
 

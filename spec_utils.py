@@ -80,6 +80,28 @@ brand_lib = {
     "CNP": ["CNP", "CNP"],
 }
 
+# ========== 中文颜色词（归一化为基础颜色） ==========
+CN_COLOR_ALIASES = {
+    '玫瑰':   ['玫瑰粉色', '玫瑰粉', '玫瑰色', '玫瑰'],
+    '绿色':   ['绿色', '绿'],
+    '透明色': ['透明色', '透明'],
+    '粉色':   ['粉色'],
+    '紫色':   ['紫色', '紫'],
+}
+
+
+def extract_cn_colors(text):
+    """提取文本中的中文颜色词，返回归一化的基础颜色集合"""
+    t = str(text).lower()
+    colors = set()
+    for base, aliases in CN_COLOR_ALIASES.items():
+        # 按别名长度降序，命中一个就归入该基础色
+        for alias in sorted(aliases, key=len, reverse=True):
+            if alias in t:
+                colors.add(base)
+                break
+    return colors
+
 def extract_concentration(text):
     """
     从文本中提取香精浓度类型，返回标准化标识。
@@ -130,7 +152,7 @@ def extract_specs(text):
     pack_set = set()
 
     # ---------- 容量 ----------
-    cap_pattern = r'(\d+(?:\.\d+)?(?:\s*[-/]\s*\d+(?:\.\d+)?)*)\s*(ml|g|l|oz|片|粒|枚|对|支|个|盒|瓶|块|毫升|克|升|条)'
+    cap_pattern = r'(\d+(?:\.\d+)?(?:\s*[-/]\s*\d+(?:\.\d+)?)*)\s*(ml|g|l|oz|片|粒|枚|对|支|袋|个|盒|瓶|块|毫升|克|升|条)'
     for match in re.finditer(cap_pattern, text):
         num_part = match.group(1)
         nums = re.findall(r'\d+\.?\d*', num_part)
@@ -147,7 +169,7 @@ def extract_specs(text):
     # ---------- 包装数量 ----------
     for m in re.finditer(r'[\*xX×]\s*(\d+)', text):
         pack_set.add(m.group(1))
-    for m in re.finditer(r'(\d+)\s*(支|个|件|瓶|盒|对|组)\s*装?', text):
+    for m in re.finditer(r'(\d+)\s*(支|个|件|瓶|袋|盒|对|组)\s*装?', text):
         pack_set.add(m.group(1))
     chinese_num_map = {'两':'2','三':'3','四':'4','五':'5','六':'6'}
     for m in re.finditer(r'(两|三|四|五|六)\s*(支|个|瓶|盒|对|组)\s*装?', text):
@@ -218,6 +240,7 @@ def extract_specs(text):
 
     color_codes = {c for c in color_codes if not re.search(r'(ml|g|oz|升|毫升)$', c.lower())}
     cap_nums.update(pack_set)
+    color_codes.update(extract_cn_colors(text))
     # ========== 新增：过滤品牌别名 ==========
     # 构建品牌别名集合（小写）
     brand_aliases_lower = set()

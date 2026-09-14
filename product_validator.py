@@ -1,7 +1,6 @@
 import re
 from typing import List, Optional
-from spec_utils import extract_concentration, extract_simple_pack, concentration_match, extract_specs, brand_lib
-# ====================== 品牌字典 ======================
+from spec_utils import extract_concentration, extract_simple_pack, concentration_match, extract_specs, brand_lib, CN_COLOR_ALIASES
 
 
 # ====================== 工具函数 ======================
@@ -284,6 +283,56 @@ def apply_manual_overrides(search_word, product_title, result):
                 result['remark'] = extra
             print("⚠️ 单例规则命中：澳洲檀木未匹配")
 
+    # ===== 规则：搜索词含“花与她”但不含“果漾”，标题含“果漾” → 不通过 =====
+    if "花与她" in search_word and "果漾" not in search_word and "果漾" in product_title:
+        result['name_ok'] = False
+        extra = "单例规则：搜索词含'花与她'但不含'果漾'，标题含'果漾'，品名不匹配"
+        original = result.get('remark', '')
+        if original and original != "通过":
+            result['remark'] = f"{original}（{extra}）"
+        else:
+            result['remark'] = extra
+        print("⚠️ 单例规则命中：花与她未指定果漾，标题含果漾，强制不通过")
+        return result
+
+    # ===== 规则：搜索词含"睡莲"，标题不能含"红茶" =====
+    if "睡莲" in search_word and "红茶" in product_title:
+        result['name_ok'] = False
+        extra = "单例规则：搜索词含'睡莲'，标题含'红茶'，系列不符"
+        original = result.get('remark', '')
+        if original and original != "通过":
+            result['remark'] = f"{original}（{extra}）"
+        else:
+            result['remark'] = extra
+        print("⚠️ 单例规则命中：睡莲 vs 红茶，强制不通过")
+        return result
+
+    # ===== 规则：花漾甜心 —— 搜索词是"喷雾"，标题不能是"香水" =====
+    if "花漾甜心" in search_word and "花漾甜心" in product_title:
+        if "喷雾" in search_word and "香水" in product_title:
+            result['name_ok'] = False
+            extra = "单例规则：搜索词为'喷雾'，标题为'香水'，形态不符"
+            original = result.get('remark', '')
+            if original and original != "通过":
+                result['remark'] = f"{original}（{extra}）"
+            else:
+                result['remark'] = extra
+            print("⚠️ 单例规则命中：花漾甜心 喷雾 vs 香水，强制不通过")
+            return result
+
+    # ===== 规则：黛珂散粉 —— 搜索词不含礼盒，标题不能含礼盒 =====
+    if "黛珂" in search_word and "散粉" in search_word:
+        if "礼盒" not in search_word and "礼盒" in product_title:
+            result['name_ok'] = False
+            extra = "单例规则：搜索词为黛珂散粉且不含'礼盒'，标题含'礼盒'，形态不符"
+            original = result.get('remark', '')
+            if original and original != "通过":
+                result['remark'] = f"{original}（{extra}）"
+            else:
+                result['remark'] = extra
+            print("⚠️ 单例规则命中：黛珂散粉 搜索词无礼盒 vs 标题含礼盒，强制不通过")
+            return result
+
     # ===== 规则：古驰炼金师花园系列香型必须匹配 =====
     if "炼金" in search_word and "炼金" in product_title:
         # 提取搜索词中的香型（位于“花园”之后，可能以“之”或“香水”分隔）
@@ -396,7 +445,15 @@ def validate_product(
 
     # 色号检查
     product_lower = product_title.lower()
-    color_ok = all(code in product_lower for code in s_color)
+
+    def _color_in_text(code, text):
+        """中文颜色词支持别名匹配；其他色号按子串匹配"""
+        if code in text:
+            return True
+        if code in CN_COLOR_ALIASES:
+            return any(alias in text for alias in CN_COLOR_ALIASES[code])
+        return False
+    color_ok = all(_color_in_text(code, product_lower) for code in s_color)
 
     # ---------- 新增：计数单位特殊处理 ----------
     COUNT_UNITS = {'粒', '片', '颗'}
@@ -761,4 +818,7 @@ if __name__ == '__main__':
     print()
     validate_product("资生堂悦微清爽水150ml（新版）",
                      "【正品保证】资生堂悦薇智感亮肤水150ml滋润型紧致弹润")
+    print()
+    validate_product("Burberry花与她女士浓香水100ml",
+                     "【BURBERRY】博柏利巴宝莉花与她果漾青提软糖EDT香水50/100ml")
     print()

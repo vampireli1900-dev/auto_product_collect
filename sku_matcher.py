@@ -3,7 +3,7 @@ import re
 import time
 from typing import Dict, Optional, Set, List
 import uiautomator2 as u2
-from spec_utils import  extract_specs, brand_lib
+from spec_utils import extract_specs, brand_lib, CN_COLOR_ALIASES, extract_cn_colors
 
 
 STOP_CHARS = set("的之了·・-— ")
@@ -23,7 +23,7 @@ def _get_brand_aliases_lower():
 
 
 def get_sku_identifiers(search_word: str) -> list:
-    """提取规格标识列表：色号、英文名、容量，并额外拆分单词"""
+    """提取规格标识列表：色号、英文名、容量/数量，并额外拆分单词"""
     identifiers = []
     seen = set()
 
@@ -61,14 +61,9 @@ def get_sku_identifiers(search_word: str) -> list:
         identifiers.append(cl)
 
     # 4. 英文产品名（过滤品牌词），并额外添加每个独立单词
-    # 先移除所有容量数字+单位
-    cleaned = re.sub(r'\d+(?:\.\d+)?\s*(ml|g|l|oz|毫升|克|升)\b', '', search_word, flags=re.I)
+    cleaned = re.sub(r'\d+(?:\.\d+)?\s*(ml|g|l|oz|毫升|克|升|片|粒|枚|对|支|个|盒|瓶|块)\b', '', search_word, flags=re.I)
     words = re.findall(r'[a-zA-Z]{2,}', cleaned)
-    # 在函数开头或文件顶部定义黑名单（避免重复，可以在函数内定义）
     concentration_blacklist = {'edp', 'edt', 'edc', 'parfum', 'toilette', '浓香', '淡香', '古龙'}
-
-
-    # 常见单位黑名单（不应当作为标识）
     unit_blacklist = {'ml', 'g', 'l', 'oz', '毫升', '克', '升', 'mg', 'kg'}
 
     if words:
@@ -90,38 +85,51 @@ def get_sku_identifiers(search_word: str) -> list:
                 continue  # 跳过浓度词
             meaningful.append(w_lower)
         if meaningful:
-            # 添加完整短语
             eng_phrase = ' '.join(meaningful).lower()
             if eng_phrase not in seen:
                 seen.add(eng_phrase)
                 identifiers.append(eng_phrase)
-            # 额外添加每个独立单词（长度≥3）
             for w in meaningful:
                 if len(w) >= 3 and w not in seen:
                     seen.add(w)
                     identifiers.append(w)
 
-    # 5. 容量（只添加带数字的单位，如 50ml）
-    m = re.search(r'(\d+(?:\.\d+)?)\s*(ml|g|l|oz|毫升|克|升)', search_word, re.I)
-    if m:
-        num_str = m.group(1)  # 原始数字字符串，如 "30" 或 "30.5"
+    # 5. 容量/数量（支持多种单位，区分体积重量与计数单位）
+    cap_match = re.search(
+        r'(\d+(?:\.\d+)?)\s*(ml|g|l|oz|毫升|克|升|片|粒|枚|对|支|个|盒|瓶|块)',
+        search_word,
+        re.I
+    )
+    if cap_match:
+        num_str = cap_match.group(1)
         num_float = float(num_str)
-        unit = m.group(2).lower()
+        unit_raw = cap_match.group(2).lower()
         unit_map = {'毫升': 'ml', '克': 'g', '升': 'l'}
-        unit = unit_map.get(unit, unit)
-        # 过滤小容量（例如 < 2ml/g，样品/小样通常较小）
-        if num_float < 2:
+        unit = unit_map.get(unit_raw, unit_raw)
+
+        # 体积/重量单位的小容量过滤（<2 跳过）
+        volume_units = {'ml', 'g', 'l', 'oz', '毫升', '克', '升'}
+        if unit in volume_units and num_float < 2:
             print(f"[DEBUG][get_sku_identifiers] 跳过小容量: {num_float}{unit}")
         else:
-            # 如果是整数（如 30.0），则显示为 "30"，否则保留小数
             if num_float.is_integer():
                 num_display = str(int(num_float))
             else:
-                num_display = num_str  # 保留原始小数形式，如 "30.5"
+                num_display = num_str
             cap_id = f"{num_display}{unit}"
             if cap_id not in seen:
                 identifiers.append(cap_id)
 
+    # 5.5 中文颜色词（用于点击 SKU 规格）
+    sw_lower = search_word.lower()
+    for base, aliases in CN_COLOR_ALIASES.items():
+        # 所有命中别名的按长度降序加进去，长词优先
+        matched = [a for a in aliases if a in sw_lower]
+        for alias in sorted(matched, key=len, reverse=True):
+            if alias not in seen:
+                seen.add(alias)
+                identifiers.append(alias)
+                print(f"[DEBUG][get_sku_identifiers] 提取中文颜色标识: {alias}")
 
     print(f"[DEBUG][get_sku_identifiers] 提取标识: {identifiers}")
     return identifiers
@@ -475,13 +483,15 @@ def get_sku_price_auto(d, search_word: str, click_timeout: float = 2.0) -> Dict[
     # 分离标识：色号、容量、其他
     # 色号：非纯数字，且包含字母（由 extract_specs 提取的 color_codes 我们无法直接区分，用启发式）
     def is_color_code(ident):
-        # 长度为 2~6，包含字母，不全是数字，不是容量格式（数字+ml/g等）
-        if re.match(r'\d+[a-z]+$', ident):  # 如 90ml 是容量
+        # 中文颜色词直接当色号
+        if ident in CN_COLOR_ALIASES:
+            return True
+        if re.match(r'\d+[a-z]+$', ident):  # 90ml 是容量
             return False
         return bool(re.search(r'[a-z]', ident)) and len(ident) >= 2
 
     color_ids = [i for i in identifiers if is_color_code(i) and i not in concentration_blacklist]
-    cap_ids = [i for i in identifiers if re.match(r'\d+[a-z]+$', i)]
+    cap_ids = [i for i in identifiers if re.match(r'\d+(?:\.\d+)?(ml|g|l|oz|毫升|克|升|片|粒|枚|对|支|个|盒|瓶|块)$', i, re.I)]
     other_ids = [i for i in identifiers if i not in color_ids and i not in cap_ids]
 
     # 搜索词中的浓度要求（用于辅助容量过滤）
