@@ -13,7 +13,10 @@ COLLECT_FILE = "商品采集汇总.xlsx"
 OUTPUT_FILE = "录入表_更新.xlsx"
 BASE_DATE = pd.Timestamp("1900-01-01")
 
-
+QUANTITY_PATTERN = re.compile(
+    r'(双支|两支|2支|\*2|对装|双只|两瓶|2瓶|两支装|双支装|双瓶装|两瓶装|双包装|两份|双份|两只装|2只装|两只|2只|两盒|2盒|双盒|两罐)',
+    re.IGNORECASE
+)
 """
 从同一序号的多条采集记录中选出最佳一条。
 
@@ -80,70 +83,105 @@ def get_shelf_life_days(prod_date, exp_date):
         return delta
     return None
 
-
 # 中文数字映射
-CN_NUM = {
-    '一': 1, '二': 2, '两': 2, '三': 3, '四': 4,
-    '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10
-}
+# 统一单位表 —— 两边共用，绝不分开写
+# 统一单位表 —— 两侧共用，切勿分开写
+_UNITS = r'(?:支|瓶|盒|罐|只|包|份|件|袋|片)'
+CN_NUM = {'一':1,'二':2,'两':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10}
+
 
 def extract_quantity_multiplier(text):
-    """
-    从文本中提取数量倍数，默认 1。
-    支持：
-    *3、x3、X3、×3
-    3支、3瓶、3盒、3只、3包、3份、3件、3罐、3袋、3装
-    三支、两瓶、双支、两支、双瓶、两瓶等
-    """
+    """只提取明确出现的、>1 的具体数量；否则返回 1。"""
     if pd.isna(text):
         return 1
+    s = str(text).strip()
+    if not s:
+        return 1
 
-    s = str(text)
-
-    # 1）优先匹配 *3、x3、X3、×3
+    # 1) *N / xN / XN / ×N
     m = re.search(r'(?:\*|x|X|×)\s*(\d+)', s)
     if m:
-        qty = int(m.group(1))
-        if 1 <= qty <= 20:
-            return qty
+        q = int(m.group(1))
+        if 2 <= q <= 20:
+            return q
 
-    # 2）匹配 3支、3瓶、3盒、3只、3包、3份、3件、3罐、3袋、3装
-    m = re.search(r'(\d+)\s*(?:支|瓶|盒|罐|只|包|份|件|袋|装)', s)
+    # 2) 阿拉伯数字 + 统一单位
+    m = re.search(r'(\d+)\s*' + _UNITS, s)
     if m:
-        qty = int(m.group(1))
-        if 1 <= qty <= 20:
-            return qty
+        q = int(m.group(1))
+        if 2 <= q <= 20:
+            return q
 
-    # 3）匹配中文数量：三支、两瓶、三盒等
-    m = re.search(r'([一二两三四五六七八九十])\s*(?:支|瓶|盒|罐|只|包|份|件|袋|装)', s)
+    # 3) 中文数字 + 统一单位
+    m = re.search(r'([二两三四五六七八九十])\s*' + _UNITS, s)
     if m:
-        return CN_NUM.get(m.group(1), 1)
-
-    # 4）双份类兜底
-    if re.search(r'(双支|两支|双瓶|两瓶|双只|两只|双盒|两盒|双罐|两罐|对装|双包装|双份|两份)', s):
-        return 2
+        q = CN_NUM.get(m.group(1), 1)
+        if 2 <= q <= 20:
+            return q
 
     return 1
 
 
-def adjust_price_by_quantity(price, keyword, product_name):
+def extract_quantity_from_spec(spec_text):
+    """从『匹配规格』中提取数量。会剥掉『已选择：』前缀，并兼容双份兜底。"""
+    if pd.isna(spec_text):
+        return 1
+    s = str(spec_text).strip()
+    if not s:
+        return 1
+
+    # 剥掉前缀（已选择： / 已选： / 已匹配： 等）
+    s = re.sub(r'^\s*(?:已选择|已选|已匹配)\s*[:：]\s*', '', s)
+
+    q = extract_quantity_multiplier(s)
+    if q == 1 and QUANTITY_PATTERN.search(s):
+        q = 2
+    return q
+
+
+def adjust_price_by_quantity(price, keyword, product_name, spec_match=None):
+    """
+    数量调整规则：
+      1. 先从关键词、货品名称、匹配规格分别提取数量
+      2. ★ 若匹配规格里能提取到 >1 的数量，则覆盖货品名称的数量
+      3. 再做旧逻辑判断：
+           - 关键词单份 & 名称多份 → 价格 ÷ 名称数量
+           - 关键词多份 & 名称单份 → 价格 × 关键词数量
+           - 两边数量相同       → 不处理
+           - 两边都多份但数量不同 → 保持原价（防止误杀）
+    """
     if pd.isna(price):
         return price, ''
 
-    kw_qty = extract_quantity_multiplier(keyword)
+    kw_qty   = extract_quantity_multiplier(keyword)
     name_qty = extract_quantity_multiplier(product_name)
+    spec_qty = extract_quantity_from_spec(spec_match)
 
-    # 货品名称是多件，关键词是单件：把总价折算成单件价
-    if kw_qty == 1 and name_qty > 1:
-        return price / name_qty, f'价格除以{name_qty}（{name_qty}件）'
+    # 原 QUANTITY_PATTERN 兜底（双份/两支等未带数字的情况）
+    if kw_qty == 1 and not pd.isna(keyword) and QUANTITY_PATTERN.search(str(keyword)):
+        kw_qty = 2
+    if name_qty == 1 and not pd.isna(product_name) and QUANTITY_PATTERN.search(str(product_name)):
+        name_qty = 2
 
-    # 关键词是多件，货品名称是单件：按关键词数量放大
-    elif kw_qty > 1 and name_qty == 1:
-        return price * kw_qty, f'价格乘以{kw_qty}（{kw_qty}件）'
+    # ★★★ 关键：匹配规格覆盖货品名称的数量
+    spec_overridden = False
+    if spec_qty > 1:
+        name_qty = spec_qty
+        spec_overridden = True
 
-    else:
+    # 两边数量相同 → 不处理
+    if kw_qty == name_qty:
         return price, ''
 
+    if kw_qty == 1 and name_qty > 1:
+        tag = f'（匹配规格{name_qty}件）' if spec_overridden else f'（货品名称{name_qty}件）'
+        return price / name_qty, f'价格除以{name_qty}{tag}'
+
+    if kw_qty > 1 and name_qty == 1:
+        return price * kw_qty, f'价格乘以{kw_qty}（关键词{kw_qty}件）'
+
+    # 两边都多份但数量不同 → 保持原价，避免误杀
+    return price, ''
 
 def compute_candidate_price(row):
     """
@@ -235,7 +273,12 @@ def select_best_record(records, last_price_map=None):
     # 计算基准价格和最终价格（含数量调整）
     records['_base_price'] = records.apply(compute_candidate_price, axis=1)
     adj = records.apply(
-        lambda row: adjust_price_by_quantity(row['_base_price'], row.get('关键词'), row.get('货品名称')),
+        lambda row: adjust_price_by_quantity(
+            row['_base_price'],
+            row.get('关键词'),
+            row.get('货品名称'),
+            row.get('匹配规格'),      # ★ 新增：传入匹配规格
+        ),
         axis=1, result_type='expand'
     )
     records['_final_price'] = adj[0]

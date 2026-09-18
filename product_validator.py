@@ -248,7 +248,13 @@ def apply_manual_overrides(search_word, product_title, result):
         修改后的 result 字典（会直接修改原字典，并返回）
     """
     # 规则1：兰蔻养肤水粉底液 vs 持妆粉底液 → 不通过
-    if "养肤" in search_word and "持妆" in product_title:
+    # 规则1：兰蔻养肤水粉底液 vs 持妆粉底液 → 不通过
+    # 只有当商品标题里没有"养肤"、只提"持妆"时，才判为另一个系列
+    if (
+        "养肤" in search_word
+        and "养肤" not in product_title          # 商品名没有养肤
+        and "持妆" in product_title              # 商品名只有持妆
+    ):
         result['remark'] = "单例规则：'养肤'与'持妆'不符，品名不匹配"
         result['name_ok'] = False
         print("⚠️ 单例规则命中：兰蔻养肤水 vs 持妆")
@@ -456,24 +462,26 @@ def validate_product(
     color_ok = all(_color_in_text(code, product_lower) for code in s_color)
 
     # ---------- 新增：计数单位特殊处理 ----------
-    COUNT_UNITS = {'粒', '片', '颗'}
+    COUNT_UNITS = {'粒', '片', '颗', '对', '枚'}
 
     def extract_count_capacity(text):
-        """提取数字+计数单位，返回集合如 {'300粒', '180粒'}"""
         pattern = r'(\d+)\s*(' + '|'.join(COUNT_UNITS) + ')'
         matches = re.findall(pattern, text, re.IGNORECASE)
-        return {f"{num}{unit}" for num, unit in matches}
+        # 返回 (数字, 单位) 集合
+        return {(num, unit) for num, unit in matches}
 
     s_count_caps = extract_count_capacity(search_word)
     p_count_caps = extract_count_capacity(product_title)
 
     if s_count_caps:
-        # 搜索词含有计数单位 → 必须容量严格匹配（数字+单位）
-        count_ok = s_count_caps.issubset(p_count_caps)
+        s_nums = {num for num, _ in s_count_caps}
+        # 商品标题的数字来源：计数单位 + 容量（含 *N 形式的 pack）
+        p_nums_all = {num for num, _ in p_count_caps} | set(p_cap)
+        count_ok = s_nums.issubset(p_nums_all)
         if not count_ok:
             spec_ok = False
+            spec_fail_reason = f"计数单位/数字不匹配：{s_count_caps} → {p_count_caps} | cap={p_cap}"
         else:
-            # 容量匹配后，仍需检查色号
             spec_ok = color_ok
     else:
         # 无计数单位 → 保留原有逻辑（色号优先）
@@ -821,4 +829,13 @@ if __name__ == '__main__':
     print()
     validate_product("Burberry花与她女士浓香水100ml",
                      "【BURBERRY】博柏利巴宝莉花与她果漾青提软糖EDT香水50/100ml")
+    print()
+    validate_product("资生堂悦薇眼膜12片/盒（新款）",
+                     "【资生堂】悦薇新小熨斗眼膜*12 /盒淡化细纹祛黑眼圈焕白提拉紧致")
+    print()
+    validate_product("阿玛尼权力粉底液3号",
+                     "【正品行货】阿玛尼粉底液新版权利蓝标大师正品自然色轻薄遮瑕")
+    print()
+    validate_product("兰蔻养肤水粉底液 PO-01 30ml",
+                     "【兰蔻】水粉底30ml正装PO-01养肤柔光粉底液保湿滋润持妆底妆彩妆")
     print()

@@ -185,8 +185,11 @@ def extract_specs(text):
         if not re.search(r'(ml|g|oz|升|毫升)$', code):
             color_codes.add(code)
     # 紧贴“色”或“号”
-    for m in re.finditer(r'\b([A-Za-z]?\d+[A-Za-z]*)\s*(色|号)\b', text):
-        color_codes.add(m.group(1).lower())
+    # 紧贴“色/号”的数字（含 1 位数字，如 3号、5色；也允许 LC1号、1C1号）
+    for m in re.finditer(r'(?<!\d)([A-Za-z]?\d+[A-Za-z]*)\s*(?:色|号)', text):
+        code = m.group(1).lower()
+        # 避免误抓容量数字（如 30ml 后的“30号”其实不在 “色/号”前，不会命中，无需额外过滤）
+        color_codes.add(code)
     # 独立色号（含字母）
     for m in re.finditer(r'\b([a-z]?\d+[a-z]\d*)\b', text):
         code = m.group(1)
